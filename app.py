@@ -7,7 +7,7 @@ from vector_store import (
     get_vector_store, vector_store_exists, DATA_PATH, DB_FAISS_PATH
 )
 from query_processor import process_query
-from config import validate_api_key  # Import from config
+from config import validate_api_key
 
 # --- Configuration ---
 st.set_page_config(page_title="DocuBot AI 🤖", page_icon="🤖", layout="wide")
@@ -26,6 +26,10 @@ if 'is_processed' not in st.session_state:
     st.session_state.is_processed = vector_store_exists()
 if 'db_loaded' not in st.session_state:
     st.session_state.db_loaded = False
+if 'processing_status' not in st.session_state:
+    st.session_state.processing_status = ""
+if 'scraping_status' not in st.session_state:
+    st.session_state.scraping_status = {}
 
 # --- Streamlit UI ---
 with st.sidebar:
@@ -46,7 +50,7 @@ with st.sidebar:
     with input_tab2:
         website_urls = st.text_area(
             "Website URLs",
-            placeholder="Enter one or more URLs (one per line)\nExample:\nhttps://example.com\nhttps://another-site.com",
+            placeholder="Enter one or more URLs (one per line)\nExample:\nhttps://example.com\nhttps://docs.streamlit.io\nhttps://en.wikipedia.org/wiki/Artificial_intelligence",
             help="Add websites to scrape and include in your knowledge base"
         )
         urls_list = [url.strip() for url in website_urls.split('\n') if url.strip()] if website_urls else []
@@ -94,55 +98,131 @@ with st.sidebar:
             st.session_state.is_processed = False
             st.session_state.db_loaded = False
             st.session_state.messages = []
+            st.session_state.processing_status = ""
+            st.session_state.scraping_status = {}
             st.toast(result, icon="✨")
             st.rerun()
 
-    # Processing logic
-    if process_pdfs and uploaded_files:
-        with st.spinner("Processing PDF documents..."):
-            new_files = save_uploaded_files(uploaded_files)
-            
-            if processing_mode == "Replace All Content":
-                if os.path.exists(DB_FAISS_PATH):
-                    shutil.rmtree(DB_FAISS_PATH)
-                db, action = build_vector_store(append=False)
-            else:
-                db, action = build_vector_store(append=True)
-            
-            if db is not None and action != "no_new_files":
-                st.session_state.is_processed = True
-                st.session_state.db_loaded = True
-                st.success(f"✅ PDF documents {action} successfully!")
-                if new_files:
-                    st.toast(f"Added {len(new_files)} new documents", icon="📄")
-            elif action == "no_new_files":
-                st.info("ℹ️ No new PDF documents to process.")
-            else:
-                st.error("❌ Failed to process PDF documents.")
-            st.rerun()
+    # Show current processing status
+    if st.session_state.processing_status:
+        st.info(f"🔄 {st.session_state.processing_status}")
     
-    if process_websites and urls_list:
-        with st.spinner(f"Scraping {len(urls_list)} website(s)..."):
-            if processing_mode == "Replace All Content":
-                if os.path.exists(DB_FAISS_PATH):
-                    shutil.rmtree(DB_FAISS_PATH)
-                db, action = build_vector_store_from_urls(urls_list, append=False)
-            else:
-                db, action = build_vector_store_from_urls(urls_list, append=True)
+    # Show scraping status if any
+    if st.session_state.scraping_status:
+        with st.expander("🌐 Scraping Progress", expanded=True):
+            for url, status in st.session_state.scraping_status.items():
+                if "success" in status.lower():
+                    st.success(f"✅ {url}: {status}")
+                elif "fail" in status.lower() or "error" in status.lower():
+                    st.error(f"❌ {url}: {status}")
+                else:
+                    st.info(f"🔄 {url}: {status}")
+
+    # Processing logic for PDFs
+    if process_pdfs and uploaded_files:
+        st.session_state.processing_status = "Starting PDF processing..."
+        st.session_state.scraping_status = {}  # Clear previous scraping status
+        
+        with st.spinner("Processing PDF documents..."):
+            try:
+                # Create status container for real-time updates
+                status_container = st.empty()
+                status_container.info("📥 Saving uploaded files...")
+                
+                new_files = save_uploaded_files(uploaded_files)
+                status_container.info("🔧 Building vector store...")
+                
+                if processing_mode == "Replace All Content":
+                    if os.path.exists(DB_FAISS_PATH):
+                        shutil.rmtree(DB_FAISS_PATH)
+                    db, action = build_vector_store(append=False)
+                else:
+                    db, action = build_vector_store(append=True)
+                
+                if db is not None and action != "no_new_files":
+                    st.session_state.is_processed = True
+                    st.session_state.db_loaded = True
+                    st.session_state.processing_status = ""
+                    status_container.empty()
+                    st.success(f"✅ PDF documents {action} successfully!")
+                    if new_files:
+                        st.toast(f"Added {len(new_files)} new documents", icon="📄")
+                elif action == "no_new_files":
+                    st.session_state.processing_status = ""
+                    status_container.empty()
+                    st.info("ℹ️ No new PDF documents to process.")
+                else:
+                    st.session_state.processing_status = ""
+                    status_container.empty()
+                    st.error("❌ Failed to process PDF documents.")
+                
+            except Exception as e:
+                st.session_state.processing_status = ""
+                status_container.empty()
+                st.error(f"❌ Error processing PDFs: {str(e)}")
+                st.toast("PDF processing failed", icon="❌")
             
-            if db is not None:
-                st.session_state.is_processed = True
-                st.session_state.db_loaded = True
-                st.success(f"✅ Websites {action} successfully!")
-                st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
-            else:
-                st.error("❌ Failed to scrape websites.")
+            st.rerun()
+
+    # Processing logic for websites
+    if process_websites and urls_list:
+        st.session_state.processing_status = f"Starting web scraping for {len(urls_list)} website(s)..."
+        
+        # Initialize scraping status for all URLs
+        for url in urls_list:
+            st.session_state.scraping_status[url] = "Queued for scraping"
+        
+        with st.spinner(f"Scraping {len(urls_list)} website(s)..."):
+            try:
+                # Create progress area
+                progress_container = st.empty()
+                
+                if processing_mode == "Replace All Content":
+                    if os.path.exists(DB_FAISS_PATH):
+                        shutil.rmtree(DB_FAISS_PATH)
+                    db, action = build_vector_store_from_urls(urls_list, append=False)
+                else:
+                    db, action = build_vector_store_from_urls(urls_list, append=True)
+                
+                # Update final status
+                successful_scrapes = sum(1 for status in st.session_state.scraping_status.values() 
+                                       if "success" in status.lower())
+                failed_scrapes = len(urls_list) - successful_scrapes
+                
+                if db is not None:
+                    st.session_state.is_processed = True
+                    st.session_state.db_loaded = True
+                    st.session_state.processing_status = ""
+                    
+                    if successful_scrapes > 0:
+                        st.success(f"✅ Successfully processed {successful_scrapes}/{len(urls_list)} websites!")
+                        if failed_scrapes > 0:
+                            st.warning(f"⚠️ {failed_scrapes} website(s) failed to scrape")
+                        st.toast(f"Websites {action} successfully!", icon="🌐")
+                    else:
+                        st.error("❌ All websites failed to scrape")
+                else:
+                    st.session_state.processing_status = ""
+                    st.error("❌ Failed to create vector store from websites")
+                
+            except Exception as e:
+                st.session_state.processing_status = ""
+                st.error(f"❌ Error during web scraping: {str(e)}")
+                st.toast("Web scraping failed", icon="❌")
+            
             st.rerun()
 
     st.markdown("---")
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.toast("Chat history cleared!", icon="🧹")
+    
+    # Clear status button
+    if st.session_state.processing_status or st.session_state.scraping_status:
+        if st.button("🗑️ Clear Status", use_container_width=True):
+            st.session_state.processing_status = ""
+            st.session_state.scraping_status = {}
+            st.rerun()
     
     # Display document info
     if st.session_state.get('is_processed', False) and os.path.exists(DATA_PATH):
@@ -187,9 +267,15 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
         st.warning("Please add some content (PDFs or websites) before asking questions.")
     else:
         try:
-            with st.spinner("Thinking..."):
+            with st.spinner("🔍 Searching knowledge base..."):
+                # Show processing indicator
+                thinking_container = st.empty()
+                thinking_container.info("🤔 Analyzing your question...")
+                
                 # Use the query processor with the API key
                 result = process_query(prompt, api_key)
+                
+                thinking_container.empty()
                 
                 if result['success']:
                     enhanced_result = result['answer']
@@ -219,3 +305,25 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
             error_msg = f"⚠️ An error occurred while processing your question: {str(e)}"
             st.error(error_msg)
             st.session_state.messages.append({'role': 'assistant', 'content': error_msg})
+
+# Footer with status information
+st.markdown("---")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.session_state.is_processed:
+        st.success("✅ Knowledge Base: Ready")
+    else:
+        st.warning("⚠️ Knowledge Base: Not Ready")
+
+with col2:
+    if api_key:
+        st.success("✅ API Key: Configured")
+    else:
+        st.error("❌ API Key: Missing")
+
+with col3:
+    if st.session_state.processing_status or st.session_state.scraping_status:
+        st.info("🔄 Processing: In Progress")
+    else:
+        st.success("✅ Processing: Idle")
