@@ -7,25 +7,17 @@ from vector_store import (
     get_vector_store, vector_store_exists, DATA_PATH, DB_FAISS_PATH
 )
 from query_processor import process_query
-from dotenv import load_dotenv
-
-# Load environment variables for local development
-load_dotenv()
+from config import validate_api_key  # Import from config
 
 # --- Configuration ---
 st.set_page_config(page_title="DocuBot AI 🤖", page_icon="🤖", layout="wide")
 
-# Get API key from Streamlit secrets or .env file
-def get_api_key():
-    """Get API key from Streamlit secrets or .env file"""
-    # First try Streamlit secrets (for deployment)
-    if hasattr(st, 'secrets') and 'GROQ_API_KEY' in st.secrets:
-        return st.secrets['GROQ_API_KEY']
-    # Then try environment variable (for local development)
-    elif 'GROQ_API_KEY' in os.environ:
-        return os.environ['GROQ_API_KEY']
-    else:
-        return None
+# Get API key (this will show error if not found)
+try:
+    api_key = validate_api_key()
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
 
 # Initialize session state
 if 'messages' not in st.session_state:
@@ -34,18 +26,6 @@ if 'is_processed' not in st.session_state:
     st.session_state.is_processed = vector_store_exists()
 if 'db_loaded' not in st.session_state:
     st.session_state.db_loaded = False
-
-# Check if API key is available
-api_key = get_api_key()
-if not api_key:
-    st.error("""
-    ❌ GROQ_API_KEY not found. 
-    
-    Please add your API key to:
-    - **Streamlit Cloud**: Go to App Settings → Secrets
-    - **Local development**: Create a `.env` file
-    """)
-    st.stop()
 
 # --- Streamlit UI ---
 with st.sidebar:
@@ -209,7 +189,7 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
         try:
             with st.spinner("Thinking..."):
                 # Use the query processor with the API key
-                result = process_query(prompt, api_key)  # Pass the API key
+                result = process_query(prompt, api_key)
                 
                 if result['success']:
                     enhanced_result = result['answer']

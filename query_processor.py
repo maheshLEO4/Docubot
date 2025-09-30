@@ -26,7 +26,7 @@ def enhance_answer(original_answer, question, context_docs):
     
     return original_answer
 
-def get_qa_chain(groq_api_key):  # Accept API key as parameter
+def get_qa_chain(groq_api_key):
     """Creates and returns the RetrievalQA chain."""
     db = get_vector_store()
     if db is None:
@@ -64,7 +64,7 @@ Please provide a helpful, accurate answer based on the context:"""
             model_name="llama-3.1-8b-instant",
             temperature=0.1,
             max_tokens=512,
-            groq_api_key=groq_api_key,  # Use the passed API key
+            groq_api_key=groq_api_key,
         ),
         chain_type="stuff",
         retriever=retriever,
@@ -73,7 +73,7 @@ Please provide a helpful, accurate answer based on the context:"""
     )
     return qa_chain
 
-def process_query(prompt, groq_api_key):  # Accept API key as parameter
+def process_query(prompt, groq_api_key):
     """Process a user query and return the response with source documents."""
     try:
         qa_chain = get_qa_chain(groq_api_key)
