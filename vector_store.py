@@ -108,13 +108,42 @@ def build_vector_store(append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS
     
     return db, action
 
-def build_vector_store_from_urls(urls, append=False, db_faiss_path=DB_FAISS_PATH):
+def build_vector_store_from_urls(urls, append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS_PATH):
     """
-    Build vector store from webpage URLs
+    Build vector store from webpage URLs with deduplication
     """
-    print("🌐 Starting web scraping...")
+    # Ensure data directory exists
+    os.makedirs(data_path, exist_ok=True)
     
-    chunks = scrape_urls_to_chunks(urls)
+    # Track processed URLs
+    processed_urls_path = os.path.join(data_path, "processed_urls.txt")
+    
+    # Convert single URL to list
+    if isinstance(urls, str):
+        urls = [urls]
+    
+    # Load existing processed URLs
+    existing_urls = set()
+    if append and os.path.exists(processed_urls_path):
+        with open(processed_urls_path, 'r') as f:
+            existing_urls = set(line.strip() for line in f if line.strip())
+    
+    # Filter out already processed URLs
+    new_urls = [url for url in urls if url not in existing_urls]
+    
+    if not new_urls:
+        print("ℹ️ No new URLs to process. All URLs are already in the vector store.")
+        # Try to load existing vector store
+        if os.path.exists(db_faiss_path):
+            embedding_model = get_embedding_model()
+            db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
+            return db, "no_new_urls"
+        return None, "no_new_urls"
+    
+    print(f"🌐 Starting web scraping for {len(new_urls)} new URL(s)...")
+    print(f"📋 URLs to scrape: {', '.join(new_urls)}")
+    
+    chunks = scrape_urls_to_chunks(new_urls)
     
     if not chunks:
         print("❌ No content could be scraped from the URLs")
@@ -133,12 +162,28 @@ def build_vector_store_from_urls(urls, append=False, db_faiss_path=DB_FAISS_PATH
             print(f"Error loading existing store: {e}")
             db = FAISS.from_documents(chunks, embedding_model)
             action = "created"
+            existing_urls = set()  # Reset for new vector store
     else:
         db = FAISS.from_documents(chunks, embedding_model)
         action = "created"
+        existing_urls = set()  # Reset for new vector store
     
     db.save_local(db_faiss_path)
-    print(f"✅ Vector store {action} from web URLs")
+    
+    # Save processed URLs
+    if action == "created":
+        # Write all URLs (overwrite)
+        with open(processed_urls_path, 'w') as f:
+            for url in new_urls:
+                f.write(url + '\n')
+    else:
+        # Append new URLs
+        with open(processed_urls_path, 'a') as f:
+            for url in new_urls:
+                f.write(url + '\n')
+    
+    print(f"✅ Vector store {action} from {len(new_urls)} web URL(s)")
+    print(f"📝 Processed URLs: {', '.join(new_urls)}")
     
     return db, action
 

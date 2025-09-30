@@ -129,21 +129,25 @@ with st.sidebar:
             if processing_mode == "Replace All Content":
                 if os.path.exists(DB_FAISS_PATH):
                     shutil.rmtree(DB_FAISS_PATH)
-                db, action = build_vector_store_from_urls(urls_list, append=False)
+                db, action = build_vector_store_from_urls(urls_list, append=False, data_path=DATA_PATH)
             else:
-                db, action = build_vector_store_from_urls(urls_list, append=True)
+                db, action = build_vector_store_from_urls(urls_list, append=True, data_path=DATA_PATH)
             
             # Clear scraping status
             if 'scraping_status' in st.session_state:
                 del st.session_state.scraping_status
             
-            if db is not None:
+            if db is not None and action not in ["no_new_urls", "failed"]:
                 st.session_state.is_processed = True
                 st.session_state.db_loaded = True
                 st.success(f"✅ Websites {action} successfully!")
                 st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
-            else:
+            elif action == "no_new_urls":
+                st.info("ℹ️ No new URLs to process. All URLs are already in the knowledge base.")
+            elif action == "failed":
                 st.error("❌ Failed to scrape websites. Some websites may block automated access.")
+            else:
+                st.error("❌ Failed to scrape websites.")
             st.rerun()
             
     st.markdown("---")
@@ -155,8 +159,10 @@ with st.sidebar:
     if st.session_state.get('is_processed', False) and os.path.exists(DATA_PATH):
         st.markdown("---")
         st.subheader("📊 Knowledge Base Info")
+        
+        # Show PDF files
         pdf_files = get_existing_pdf_files()
-        st.write(f"**Total documents:** {len(pdf_files)}")
+        st.write(f"**Total PDF documents:** {len(pdf_files)}")
         if pdf_files:
             for pdf in pdf_files[-5:]:
                 file_path = os.path.join(DATA_PATH, pdf)
@@ -167,6 +173,18 @@ with st.sidebar:
                     st.caption(f"• {pdf} (file not found)")
             if len(pdf_files) > 5:
                 st.caption(f"... and {len(pdf_files) - 5} more documents")
+        
+        # Show scraped URLs
+        processed_urls_path = os.path.join(DATA_PATH, "processed_urls.txt")
+        if os.path.exists(processed_urls_path):
+            with open(processed_urls_path, 'r') as f:
+                urls = [line.strip() for line in f if line.strip()]
+            if urls:
+                st.write(f"**Total scraped URLs:** {len(urls)}")
+                for url in urls[-5:]:
+                    st.caption(f"• {url}")
+                if len(urls) > 5:
+                    st.caption(f"... and {len(urls) - 5} more URLs")
 
 # --- Main Chat ---
 st.title("🤖 DocuBot AI: Chat with Your Documents & Websites")

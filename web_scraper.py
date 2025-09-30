@@ -23,9 +23,6 @@ def setup_selenium_driver():
     try:
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
         
         chrome_options = Options()
         chrome_options.add_argument("--headless")
@@ -52,8 +49,9 @@ def setup_selenium_driver():
 def extract_react_content(driver, url):
     """Specialized extraction for React/SPA websites"""
     try:
-        from selenium.webdriver.support.ui import WebDriverWait  # <-- Add this import
-        from selenium.webdriver.common.by import By  # <-- Add this import
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.common.by import By
+        
         driver.get(url)
         
         # Wait longer for React to render
@@ -71,46 +69,19 @@ def extract_react_content(driver, url):
         
         # Special extraction for React apps
         content = driver.execute_script("""
-            // Wait for React to render content
-            function waitForReact() {
-                return new Promise((resolve) => {
-                    const checkReact = () => {
-                        // Look for React-specific elements or content
-                        const rootElement = document.getElementById('root') || 
-                                           document.querySelector('[data-reactroot]') ||
-                                           document.body;
-                        
-                        const hasContent = rootElement.textContent && 
-                                         rootElement.textContent.trim().length > 100;
-                        
-                        if (hasContent) {
-                            resolve(rootElement.textContent);
-                        } else {
-                            // Check if we have any meaningful text content
-                            const allText = document.body.textContent || '';
-                            if (allText.trim().length > 100) {
-                                resolve(allText);
-                            } else {
-                                setTimeout(checkReact, 500);
-                            }
-                        }
-                    };
-                    checkReact();
-                });
-            }
-            
-            return waitForReact().then(content => {
-                // Clean up the content
-                const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe'];
-                unwanted.forEach(tag => {
-                    const elements = document.getElementsByTagName(tag);
-                    for (let el of elements) {
-                        el.remove();
-                    }
-                });
-                
-                return content.trim();
+            // Remove unwanted elements
+            const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe'];
+            unwanted.forEach(tag => {
+                const elements = document.getElementsByTagName(tag);
+                Array.from(elements).forEach(el => el.remove());
             });
+            
+            // Look for React-specific elements or content
+            const rootElement = document.getElementById('root') || 
+                               document.querySelector('[data-reactroot]') ||
+                               document.body;
+            
+            return rootElement.textContent ? rootElement.textContent.trim() : '';
         """)
         
         return content, title
@@ -119,6 +90,7 @@ def extract_react_content(driver, url):
         print(f"❌ React extraction failed: {e}")
         # Fallback to basic extraction
         try:
+            from selenium.webdriver.common.by import By
             return driver.find_element(By.TAG_NAME, "body").text, driver.title
         except:
             return None, None
@@ -133,6 +105,8 @@ def extract_with_selenium_enhanced(url):
         return None, None
         
     try:
+        from selenium.webdriver.common.by import By
+        
         # First try React-specific extraction
         content, title = extract_react_content(driver, url)
         
@@ -151,9 +125,7 @@ def extract_with_selenium_enhanced(url):
             const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript'];
             unwanted.forEach(tag => {
                 const elements = document.getElementsByTagName(tag);
-                for (let el of elements) {
-                    el.remove();
-                }
+                Array.from(elements).forEach(el => el.remove());
             });
             
             // Get text from common content containers
@@ -213,15 +185,50 @@ def scrape_webpage(url):
         print(f"✅ Enhanced Selenium extracted {len(cleaned_content)} characters from {url}")
         return create_document(cleaned_content, url, title, "selenium_enhanced")
     
-    # Rest of your existing methods...
-    # ... [keep your existing requests and simple methods] ...
+    # Method 2: Try requests with BeautifulSoup
+    st.session_state.scraping_status[url] = "Trying requests + BeautifulSoup..."
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Remove unwanted elements
+        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']):
+            element.decompose()
+        
+        # Extract title
+        title = soup.title.string if soup.title else url
+        
+        # Try to get main content
+        main_content = soup.find('main') or soup.find('article') or soup.find('div', class_='content')
+        content = main_content.get_text(separator=' ', strip=True) if main_content else soup.body.get_text(separator=' ', strip=True)
+        
+        if content and len(content) > 50:
+            st.session_state.scraping_status[url] = "Requests + BeautifulSoup successful!"
+            cleaned_content = clean_content(content)
+            print(f"✅ Requests extracted {len(cleaned_content)} characters from {url}")
+            return create_document(cleaned_content, url, title, "requests")
+    except Exception as e:
+        print(f"❌ Requests method failed: {e}")
+    
+    # Method 3: Simple fallback
+    st.session_state.scraping_status[url] = "All methods failed"
+    print(f"❌ Failed to scrape {url}")
+    return None
 
 def clean_content(content):
     """Clean extracted content"""
     if not content:
         return ""
     
+    # Replace multiple whitespaces with single space
     content = re.sub(r'\s+', ' ', content)
+    
+    # Split into sentences and filter short ones
     sentences = [sentence.strip() for sentence in content.split('.') if len(sentence.strip()) > 20]
     cleaned_content = '. '.join(sentences)
     
