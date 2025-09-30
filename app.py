@@ -123,6 +123,9 @@ with st.sidebar:
     
     if process_websites and urls_list:
         with st.spinner(f"Scraping {len(urls_list)} website(s)..."):
+            # Show scraping progress
+            status_container = st.empty()
+            
             if processing_mode == "Replace All Content":
                 if os.path.exists(DB_FAISS_PATH):
                     shutil.rmtree(DB_FAISS_PATH)
@@ -130,15 +133,19 @@ with st.sidebar:
             else:
                 db, action = build_vector_store_from_urls(urls_list, append=True)
             
+            # Clear scraping status
+            if 'scraping_status' in st.session_state:
+                del st.session_state.scraping_status
+            
             if db is not None:
                 st.session_state.is_processed = True
                 st.session_state.db_loaded = True
                 st.success(f"✅ Websites {action} successfully!")
                 st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
             else:
-                st.error("❌ Failed to scrape websites.")
+                st.error("❌ Failed to scrape websites. Some websites may block automated access.")
             st.rerun()
-
+            
     st.markdown("---")
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         st.session_state.messages = []
