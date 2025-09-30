@@ -145,7 +145,13 @@ with st.sidebar:
             elif action == "no_new_urls":
                 st.info("ℹ️ No new URLs to process. All URLs are already in the knowledge base.")
             elif action == "failed":
-                st.error("❌ Failed to scrape websites. Some websites may block automated access.")
+                st.error("❌ Failed to scrape websites.")
+                st.warning("""
+                **⚠️ Scraping Limitations:**
+                - ✅ Works: News sites, blogs, documentation, Wikipedia, most content sites
+                - ❌ Doesn't work on cloud: Client-side React/Vue/Angular apps
+                - 💡 For React apps: Run this app locally with Playwright installed
+                """)
             else:
                 st.error("❌ Failed to scrape websites.")
             st.rerun()

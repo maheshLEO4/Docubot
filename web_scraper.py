@@ -14,10 +14,43 @@ def is_playwright_available():
     except ImportError:
         return False
 
+def install_playwright_browsers():
+    """Install Playwright browsers if not already installed"""
+    try:
+        import subprocess
+        import os
+        
+        # Check if browsers are already installed
+        playwright_cache = os.path.expanduser("~/.cache/ms-playwright")
+        if os.path.exists(playwright_cache) and os.listdir(playwright_cache):
+            return True
+        
+        print("📦 Installing Playwright browsers (first time only)...")
+        result = subprocess.run(
+            ["playwright", "install", "chromium", "--with-deps"],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if result.returncode == 0:
+            print("✅ Playwright browsers installed successfully!")
+            return True
+        else:
+            print(f"❌ Failed to install Playwright browsers: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error installing Playwright: {e}")
+        return False
+
 def extract_with_playwright(url):
     """Extract content using Playwright (works everywhere including cloud)"""
     if not is_playwright_available():
         return None, None
+    
+    # Try to install browsers if needed
+    install_playwright_browsers()
     
     try:
         from playwright.sync_api import sync_playwright
@@ -307,24 +340,14 @@ def extract_with_requests(url):
 def scrape_webpage(url):
     """
     Scrape webpage with multiple fallback methods
-    Works for ANY webpage including React/SPA sites
+    Works for server-rendered sites. Client-side React apps require local Playwright.
     """
     print(f"🌐 Attempting to scrape: {url}")
     
     if 'scraping_status' not in st.session_state:
         st.session_state.scraping_status = {}
     
-    # Method 1: Try Playwright first (works everywhere, handles React/JS)
-    st.session_state.scraping_status[url] = "Trying Playwright (universal support)..."
-    content, title = extract_with_playwright(url)
-    
-    if content and len(content) > 50:
-        st.session_state.scraping_status[url] = "Playwright successful!"
-        cleaned_content = clean_content(content)
-        print(f"✅ Playwright extracted {len(cleaned_content)} characters from {url}")
-        return create_document(cleaned_content, url, title, "playwright")
-    
-    # Method 2: Try requests + BeautifulSoup (for simple server-rendered sites)
+    # Method 1: Try requests + BeautifulSoup (works for most sites)
     st.session_state.scraping_status[url] = "Trying requests + BeautifulSoup..."
     content, title = extract_with_requests(url)
     
@@ -333,6 +356,16 @@ def scrape_webpage(url):
         cleaned_content = clean_content(content)
         print(f"✅ Requests extracted {len(cleaned_content)} characters from {url}")
         return create_document(cleaned_content, url, title, "requests")
+    
+    # Method 2: Try Playwright (only works locally or if browsers installed)
+    st.session_state.scraping_status[url] = "Trying Playwright for JavaScript content..."
+    content, title = extract_with_playwright(url)
+    
+    if content and len(content) > 50:
+        st.session_state.scraping_status[url] = "Playwright successful!"
+        cleaned_content = clean_content(content)
+        print(f"✅ Playwright extracted {len(cleaned_content)} characters from {url}")
+        return create_document(cleaned_content, url, title, "playwright")
     
     # Method 3: Try Selenium (fallback for local environments with Chrome)
     st.session_state.scraping_status[url] = "Trying Selenium..."
@@ -345,9 +378,11 @@ def scrape_webpage(url):
         return create_document(cleaned_content, url, title, "selenium_enhanced")
     
     # All methods failed
-    st.session_state.scraping_status[url] = "All methods failed"
+    st.session_state.scraping_status[url] = "Cannot scrape client-side JavaScript apps"
     print(f"❌ Failed to scrape {url}")
-    print(f"💡 Tip: Make sure playwright is installed: pip install playwright && playwright install chromium")
+    print(f"💡 This appears to be a client-side JavaScript app.")
+    print(f"💡 On Streamlit Cloud: Only server-rendered sites work (like news sites, blogs, documentation)")
+    print(f"💡 For React/Vue/Angular apps: Run locally with Playwright/Selenium installed")
     return None
 
 def clean_content(content):
