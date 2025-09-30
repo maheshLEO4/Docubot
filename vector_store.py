@@ -1,6 +1,6 @@
 import os
 import shutil
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings  # Fixed import
 from langchain_community.vectorstores import FAISS
 from data_processing import get_document_chunks, get_existing_pdf_files
 from web_scraper import scrape_urls_to_chunks
