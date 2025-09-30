@@ -14,7 +14,7 @@ def get_api_key():
     try:
         if hasattr(st, 'secrets') and st.secrets:
             if 'GROQ_API_KEY' in st.secrets:
-                return st.secrets['GROQ_API_KEY']
+                return st.secrets.get('GROQ_API_KEY')
     except Exception:
         pass
     
