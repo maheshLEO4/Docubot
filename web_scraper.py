@@ -6,6 +6,85 @@ from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import streamlit as st
 
+def is_playwright_available():
+    """Check if Playwright is available"""
+    try:
+        from playwright.sync_api import sync_playwright
+        return True
+    except ImportError:
+        return False
+
+def extract_with_playwright(url):
+    """Extract content using Playwright (works everywhere including cloud)"""
+    if not is_playwright_available():
+        return None, None
+    
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        with sync_playwright() as p:
+            # Launch browser in headless mode
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                ]
+            )
+            
+            page = browser.new_page(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            
+            # Navigate to URL
+            page.goto(url, wait_until='networkidle', timeout=30000)
+            
+            # Wait for React/dynamic content to load
+            page.wait_for_timeout(3000)
+            
+            # Get title
+            title = page.title()
+            
+            # Remove unwanted elements
+            page.evaluate("""
+                () => {
+                    const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript'];
+                    unwanted.forEach(tag => {
+                        document.querySelectorAll(tag).forEach(el => el.remove());
+                    });
+                }
+            """)
+            
+            # Extract content from main containers or body
+            content = page.evaluate("""
+                () => {
+                    const selectors = [
+                        'main', 'article', '[role="main"]',
+                        '.content', '.main-content', '#content',
+                        '#root', '#app', '.App'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const element = document.querySelector(selector);
+                        if (element && element.innerText && element.innerText.trim().length > 100) {
+                            return element.innerText.trim();
+                        }
+                    }
+                    
+                    return document.body.innerText.trim();
+                }
+            """)
+            
+            browser.close()
+            
+            return content, title
+            
+    except Exception as e:
+        print(f"❌ Playwright extraction failed: {e}")
+        return None, None
+
 def is_selenium_available():
     """Check if Selenium is available in the current environment"""
     try:
@@ -167,7 +246,7 @@ def extract_with_selenium_enhanced(url):
         return None, None
 
 def extract_with_requests(url):
-    """Extract content using requests + BeautifulSoup (works on cloud platforms)"""
+    """Extract content using requests + BeautifulSoup (works for server-rendered sites)"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -228,14 +307,24 @@ def extract_with_requests(url):
 def scrape_webpage(url):
     """
     Scrape webpage with multiple fallback methods
-    Priority: requests (cloud-friendly) -> Selenium (local only)
+    Works for ANY webpage including React/SPA sites
     """
     print(f"🌐 Attempting to scrape: {url}")
     
     if 'scraping_status' not in st.session_state:
         st.session_state.scraping_status = {}
     
-    # Method 1: Try requests + BeautifulSoup first (works everywhere including cloud)
+    # Method 1: Try Playwright first (works everywhere, handles React/JS)
+    st.session_state.scraping_status[url] = "Trying Playwright (universal support)..."
+    content, title = extract_with_playwright(url)
+    
+    if content and len(content) > 50:
+        st.session_state.scraping_status[url] = "Playwright successful!"
+        cleaned_content = clean_content(content)
+        print(f"✅ Playwright extracted {len(cleaned_content)} characters from {url}")
+        return create_document(cleaned_content, url, title, "playwright")
+    
+    # Method 2: Try requests + BeautifulSoup (for simple server-rendered sites)
     st.session_state.scraping_status[url] = "Trying requests + BeautifulSoup..."
     content, title = extract_with_requests(url)
     
@@ -245,19 +334,20 @@ def scrape_webpage(url):
         print(f"✅ Requests extracted {len(cleaned_content)} characters from {url}")
         return create_document(cleaned_content, url, title, "requests")
     
-    # Method 2: Try enhanced Selenium (only works locally with Chrome installed)
-    st.session_state.scraping_status[url] = "Trying enhanced Selenium (React support)..."
+    # Method 3: Try Selenium (fallback for local environments with Chrome)
+    st.session_state.scraping_status[url] = "Trying Selenium..."
     content, title = extract_with_selenium_enhanced(url)
     
     if content and len(content) > 50:
-        st.session_state.scraping_status[url] = "Enhanced Selenium successful!"
+        st.session_state.scraping_status[url] = "Selenium successful!"
         cleaned_content = clean_content(content)
-        print(f"✅ Enhanced Selenium extracted {len(cleaned_content)} characters from {url}")
+        print(f"✅ Selenium extracted {len(cleaned_content)} characters from {url}")
         return create_document(cleaned_content, url, title, "selenium_enhanced")
     
-    # Method 3: All methods failed
+    # All methods failed
     st.session_state.scraping_status[url] = "All methods failed"
     print(f"❌ Failed to scrape {url}")
+    print(f"💡 Tip: Make sure playwright is installed: pip install playwright && playwright install chromium")
     return None
 
 def clean_content(content):
