@@ -9,11 +9,23 @@ from vector_store import (
 from query_processor import process_query
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables for local development
 load_dotenv()
 
 # --- Configuration ---
 st.set_page_config(page_title="DocuBot AI 🤖", page_icon="🤖", layout="wide")
+
+# Get API key from Streamlit secrets or .env file
+def get_api_key():
+    """Get API key from Streamlit secrets or .env file"""
+    # First try Streamlit secrets (for deployment)
+    if hasattr(st, 'secrets') and 'GROQ_API_KEY' in st.secrets:
+        return st.secrets['GROQ_API_KEY']
+    # Then try environment variable (for local development)
+    elif 'GROQ_API_KEY' in os.environ:
+        return os.environ['GROQ_API_KEY']
+    else:
+        return None
 
 # Initialize session state
 if 'messages' not in st.session_state:
@@ -24,8 +36,15 @@ if 'db_loaded' not in st.session_state:
     st.session_state.db_loaded = False
 
 # Check if API key is available
-if not os.getenv("GROQ_API_KEY"):
-    st.error("❌ GROQ_API_KEY not found in .env file. Please add your API key.")
+api_key = get_api_key()
+if not api_key:
+    st.error("""
+    ❌ GROQ_API_KEY not found. 
+    
+    Please add your API key to:
+    - **Streamlit Cloud**: Go to App Settings → Secrets
+    - **Local development**: Create a `.env` file
+    """)
     st.stop()
 
 # --- Streamlit UI ---
@@ -189,8 +208,8 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
     else:
         try:
             with st.spinner("Thinking..."):
-                # Use the query processor
-                result = process_query(prompt)  # No API key parameter needed now
+                # Use the query processor with the API key
+                result = process_query(prompt, api_key)  # Pass the API key
                 
                 if result['success']:
                     enhanced_result = result['answer']

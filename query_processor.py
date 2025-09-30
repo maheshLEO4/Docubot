@@ -3,10 +3,6 @@ from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 from vector_store import get_vector_store
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 def enhance_answer(original_answer, question, context_docs):
     """Post-process the answer to improve quality."""
@@ -30,7 +26,7 @@ def enhance_answer(original_answer, question, context_docs):
     
     return original_answer
 
-def get_qa_chain():
+def get_qa_chain(groq_api_key):  # Accept API key as parameter
     """Creates and returns the RetrievalQA chain."""
     db = get_vector_store()
     if db is None:
@@ -68,7 +64,7 @@ Please provide a helpful, accurate answer based on the context:"""
             model_name="llama-3.1-8b-instant",
             temperature=0.1,
             max_tokens=512,
-            groq_api_key=os.getenv("GROQ_API_KEY"),  # Get from .env
+            groq_api_key=groq_api_key,  # Use the passed API key
         ),
         chain_type="stuff",
         retriever=retriever,
@@ -77,10 +73,10 @@ Please provide a helpful, accurate answer based on the context:"""
     )
     return qa_chain
 
-def process_query(prompt):
+def process_query(prompt, groq_api_key):  # Accept API key as parameter
     """Process a user query and return the response with source documents."""
     try:
-        qa_chain = get_qa_chain()
+        qa_chain = get_qa_chain(groq_api_key)
         if qa_chain:
             response = qa_chain.invoke({'query': prompt})
             result = response["result"]
