@@ -52,6 +52,7 @@ def setup_selenium_driver():
 def extract_react_content(driver, url):
     """Specialized extraction for React/SPA websites"""
     try:
+        from selenium.webdriver.support.ui import WebDriverWait  # <-- Add this import
         driver.get(url)
         
         # Wait longer for React to render
