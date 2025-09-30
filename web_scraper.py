@@ -166,16 +166,86 @@ def extract_with_selenium_enhanced(url):
             pass
         return None, None
 
+def extract_with_requests(url):
+    """Extract content using requests + BeautifulSoup (works on cloud platforms)"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Remove unwanted elements
+        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript']):
+            element.decompose()
+        
+        # Extract title
+        title = soup.title.string if soup.title else url
+        
+        # Try to get main content from common containers
+        content = None
+        content_selectors = [
+            ('main', {}),
+            ('article', {}),
+            ('div', {'role': 'main'}),
+            ('div', {'class': ['content', 'main-content', 'post-content', 'entry-content', 
+                              'article-content', 'page-content']}),
+            ('div', {'id': ['content', 'main', 'root']}),
+        ]
+        
+        for tag, attrs in content_selectors:
+            if attrs:
+                elements = soup.find_all(tag, attrs)
+            else:
+                elements = soup.find_all(tag)
+            
+            for element in elements:
+                text = element.get_text(separator=' ', strip=True)
+                if text and len(text) > 100:
+                    content = text
+                    break
+            
+            if content:
+                break
+        
+        # Fallback to body
+        if not content:
+            content = soup.body.get_text(separator=' ', strip=True) if soup.body else ''
+        
+        return content, title
+        
+    except Exception as e:
+        print(f"❌ Requests extraction failed: {e}")
+        return None, None
+
 def scrape_webpage(url):
     """
-    Scrape webpage with enhanced React/SPA support
+    Scrape webpage with multiple fallback methods
+    Priority: requests (cloud-friendly) -> Selenium (local only)
     """
     print(f"🌐 Attempting to scrape: {url}")
     
     if 'scraping_status' not in st.session_state:
         st.session_state.scraping_status = {}
     
-    # Method 1: Try enhanced Selenium first (for React/SPA sites)
+    # Method 1: Try requests + BeautifulSoup first (works everywhere including cloud)
+    st.session_state.scraping_status[url] = "Trying requests + BeautifulSoup..."
+    content, title = extract_with_requests(url)
+    
+    if content and len(content) > 50:
+        st.session_state.scraping_status[url] = "Requests + BeautifulSoup successful!"
+        cleaned_content = clean_content(content)
+        print(f"✅ Requests extracted {len(cleaned_content)} characters from {url}")
+        return create_document(cleaned_content, url, title, "requests")
+    
+    # Method 2: Try enhanced Selenium (only works locally with Chrome installed)
     st.session_state.scraping_status[url] = "Trying enhanced Selenium (React support)..."
     content, title = extract_with_selenium_enhanced(url)
     
@@ -185,37 +255,7 @@ def scrape_webpage(url):
         print(f"✅ Enhanced Selenium extracted {len(cleaned_content)} characters from {url}")
         return create_document(cleaned_content, url, title, "selenium_enhanced")
     
-    # Method 2: Try requests with BeautifulSoup
-    st.session_state.scraping_status[url] = "Trying requests + BeautifulSoup..."
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Remove unwanted elements
-        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe']):
-            element.decompose()
-        
-        # Extract title
-        title = soup.title.string if soup.title else url
-        
-        # Try to get main content
-        main_content = soup.find('main') or soup.find('article') or soup.find('div', class_='content')
-        content = main_content.get_text(separator=' ', strip=True) if main_content else soup.body.get_text(separator=' ', strip=True)
-        
-        if content and len(content) > 50:
-            st.session_state.scraping_status[url] = "Requests + BeautifulSoup successful!"
-            cleaned_content = clean_content(content)
-            print(f"✅ Requests extracted {len(cleaned_content)} characters from {url}")
-            return create_document(cleaned_content, url, title, "requests")
-    except Exception as e:
-        print(f"❌ Requests method failed: {e}")
-    
-    # Method 3: Simple fallback
+    # Method 3: All methods failed
     st.session_state.scraping_status[url] = "All methods failed"
     print(f"❌ Failed to scrape {url}")
     return None
