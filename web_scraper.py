@@ -16,7 +16,7 @@ def is_selenium_available():
         return False
 
 def setup_selenium_driver():
-    """Setup Selenium driver for JavaScript rendering - only if available"""
+    """Setup Selenium driver for JavaScript rendering"""
     if not is_selenium_available():
         return None
         
@@ -35,7 +35,6 @@ def setup_selenium_driver():
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        # Try different methods to initialize driver
         try:
             from webdriver_manager.chrome import ChromeDriverManager
             from selenium.webdriver.chrome.service import Service
@@ -43,7 +42,6 @@ def setup_selenium_driver():
             driver = webdriver.Chrome(service=service, options=chrome_options)
             return driver
         except:
-            # Fallback to direct Chrome driver
             driver = webdriver.Chrome(options=chrome_options)
             return driver
             
@@ -51,8 +49,80 @@ def setup_selenium_driver():
         print(f"❌ Selenium setup failed: {e}")
         return None
 
-def extract_with_selenium(url):
-    """Extract content using Selenium if available"""
+def extract_react_content(driver, url):
+    """Specialized extraction for React/SPA websites"""
+    try:
+        driver.get(url)
+        
+        # Wait longer for React to render
+        time.sleep(5)
+        
+        # Wait for any dynamic content to load
+        WebDriverWait(driver, 10).until(
+            lambda driver: driver.execute_script("return document.readyState") == "complete"
+        )
+        
+        # Additional wait for React components
+        time.sleep(2)
+        
+        title = driver.title
+        
+        # Special extraction for React apps
+        content = driver.execute_script("""
+            // Wait for React to render content
+            function waitForReact() {
+                return new Promise((resolve) => {
+                    const checkReact = () => {
+                        // Look for React-specific elements or content
+                        const rootElement = document.getElementById('root') || 
+                                           document.querySelector('[data-reactroot]') ||
+                                           document.body;
+                        
+                        const hasContent = rootElement.textContent && 
+                                         rootElement.textContent.trim().length > 100;
+                        
+                        if (hasContent) {
+                            resolve(rootElement.textContent);
+                        } else {
+                            // Check if we have any meaningful text content
+                            const allText = document.body.textContent || '';
+                            if (allText.trim().length > 100) {
+                                resolve(allText);
+                            } else {
+                                setTimeout(checkReact, 500);
+                            }
+                        }
+                    };
+                    checkReact();
+                });
+            }
+            
+            return waitForReact().then(content => {
+                // Clean up the content
+                const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe'];
+                unwanted.forEach(tag => {
+                    const elements = document.getElementsByTagName(tag);
+                    for (let el of elements) {
+                        el.remove();
+                    }
+                });
+                
+                return content.trim();
+            });
+        """)
+        
+        return content, title
+        
+    except Exception as e:
+        print(f"❌ React extraction failed: {e}")
+        # Fallback to basic extraction
+        try:
+            return driver.find_element(By.TAG_NAME, "body").text, driver.title
+        except:
+            return None, None
+
+def extract_with_selenium_enhanced(url):
+    """Enhanced Selenium extraction with React support"""
     if not is_selenium_available():
         return None, None
         
@@ -61,14 +131,19 @@ def extract_with_selenium(url):
         return None, None
         
     try:
+        # First try React-specific extraction
+        content, title = extract_react_content(driver, url)
+        
+        if content and len(content) > 100:
+            driver.quit()
+            return content, title
+        
+        # Fallback to standard extraction
         driver.get(url)
-        # Wait for page to load
         time.sleep(5)
         
-        # Get page title
         title = driver.title
         
-        # Extract content using simple JavaScript
         content = driver.execute_script("""
             // Remove unwanted elements
             const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript'];
@@ -79,19 +154,13 @@ def extract_with_selenium(url):
                 }
             });
             
-            // Remove elements with common noise classes
-            const noiseClasses = ['nav', 'menu', 'sidebar', 'ad', 'banner', 'cookie', 'popup', 'modal'];
-            noiseClasses.forEach(className => {
-                const elements = document.querySelectorAll(`[class*="${className}"]`);
-                elements.forEach(el => el.remove());
-            });
-            
-            // Get main content from common content containers
+            // Get text from common content containers
             const contentSelectors = [
                 'main', 'article', '[role="main"]', 
                 '.content', '.main-content', '.post-content',
                 '.entry-content', '.article-content', '.page-content',
-                '#content', '#main', '.article', '.post', '.body'
+                '#content', '#main', '.article', '.post', '.body',
+                '#root', '[data-reactroot]', '.App'
             ];
             
             let content = '';
@@ -104,23 +173,9 @@ def extract_with_selenium(url):
                 }
             }
             
-            // If no specific content found, use body but clean it more
+            // If no specific content found, use body
             if (!content.trim()) {
-                // Try to get text from visible elements only
-                const allElements = document.body.querySelectorAll('*');
-                const visibleTexts = [];
-                
-                for (const el of allElements) {
-                    const style = window.getComputedStyle(el);
-                    if (style.display !== 'none' && 
-                        style.visibility !== 'hidden' &&
-                        el.offsetParent !== null &&
-                        el.textContent && 
-                        el.textContent.trim().length > 10) {
-                        visibleTexts.push(el.textContent.trim());
-                    }
-                }
-                content = visibleTexts.join(' ');
+                content = document.body.textContent || '';
             }
             
             return content.trim();
@@ -130,198 +185,45 @@ def extract_with_selenium(url):
         return content, title
         
     except Exception as e:
-        print(f"❌ Selenium extraction failed: {e}")
+        print(f"❌ Enhanced Selenium extraction failed: {e}")
         try:
             driver.quit()
         except:
             pass
         return None, None
 
-def extract_with_requests(url):
-    """Extract content using requests and BeautifulSoup with better headers"""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Cache-Control': 'max-age=0',
-        }
-        
-        # Add timeout and handle redirects
-        session = requests.Session()
-        session.headers.update(headers)
-        
-        response = session.get(url, timeout=20, allow_redirects=True)
-        response.raise_for_status()
-        
-        # Check if content is HTML
-        content_type = response.headers.get('content-type', '').lower()
-        if 'text/html' not in content_type:
-            return None, f"Non-HTML content: {content_type}"
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Remove unwanted elements more aggressively
-        unwanted_tags = ['script', 'style', 'meta', 'link', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript']
-        for element in soup(unwanted_tags):
-            element.decompose()
-        
-        # Remove elements with noise classes
-        noise_selectors = [
-            '[class*="nav"]', '[class*="menu"]', '[class*="sidebar"]', 
-            '[class*="ad"]', '[class*="banner"]', '[class*="cookie"]',
-            '[class*="popup"]', '[class*="modal"]', '[class*="alert"]',
-            '[id*="nav"]', '[id*="menu"]', '[id*="sidebar"]'
-        ]
-        
-        for selector in noise_selectors:
-            for element in soup.select(selector):
-                element.decompose()
-        
-        # Get title
-        title = soup.title.string if soup.title else "Unknown Title"
-        
-        # Try to find main content areas with more selectors
-        content_selectors = [
-            'main', 'article', '[role="main"]', 
-            '.content', '.main-content', '.post-content',
-            '.entry-content', '.article-content', '.page-content',
-            '.story-content', '.text-content', '.body-content',
-            '#content', '#main', '.article', '.post', '.body',
-            'section', '.section', '[class*="content"]'
-        ]
-        
-        main_content = None
-        for selector in content_selectors:
-            elements = soup.select(selector)
-            for element in elements:
-                text = element.get_text(strip=True)
-                if len(text) > 100:  # Lower threshold to catch more content
-                    main_content = text
-                    break
-            if main_content:
-                break
-        
-        # If no main content found, use body but clean it more aggressively
-        if not main_content:
-            # Remove more noise from body
-            for noise in soup.select('[class*="btn"], [class*="button"], [class*="link"], [class*="social"]'):
-                noise.decompose()
-            
-            # Get text and filter out very short lines
-            all_text = soup.get_text()
-            lines = [line.strip() for line in all_text.split('\n') if len(line.strip()) > 20]
-            main_content = '\n'.join(lines)
-        
-        return main_content, title
-        
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Request failed for {url}: {e}")
-        return None, f"Request failed: {str(e)}"
-    except Exception as e:
-        print(f"❌ Error parsing {url}: {e}")
-        return None, f"Parsing error: {str(e)}"
-
-def clean_content(content):
-    """
-    Clean extracted content while preserving meaningful information
-    """
-    if not content:
-        return ""
-    
-    # Remove excessive whitespace and newlines
-    content = re.sub(r'\s+', ' ', content)
-    
-    # Remove very short lines and noise
-    sentences = [sentence.strip() for sentence in content.split('.') if len(sentence.strip()) > 25]
-    cleaned_content = '. '.join(sentences)
-    
-    # Remove common noise patterns
-    noise_patterns = [
-        r'cookie policy|privacy policy|terms of service|terms and conditions',
-        r'sign in|login|register|subscribe|newsletter',
-        r'facebook|twitter|instagram|linkedin|youtube|pinterest',
-        r'copyright|all rights reserved|©',
-        r'home|about|contact|search|menu|navigation',
-        r'click here|learn more|read more|download now',
-    ]
-    
-    for pattern in noise_patterns:
-        cleaned_content = re.sub(pattern, '', cleaned_content, flags=re.IGNORECASE)
-    
-    # Remove extra spaces
-    cleaned_content = re.sub(r' +', ' ', cleaned_content)
-    
-    return cleaned_content.strip()
-
 def scrape_webpage(url):
     """
-    Scrape webpage and return LangChain documents
+    Scrape webpage with enhanced React/SPA support
     """
     print(f"🌐 Attempting to scrape: {url}")
     
-    # Update scraping status
     if 'scraping_status' not in st.session_state:
         st.session_state.scraping_status = {}
     
-    # Method 1: Try requests first (more reliable for most sites)
-    st.session_state.scraping_status[url] = "Trying requests method..."
-    content, title = extract_with_requests(url)
+    # Method 1: Try enhanced Selenium first (for React/SPA sites)
+    st.session_state.scraping_status[url] = "Trying enhanced Selenium (React support)..."
+    content, title = extract_with_selenium_enhanced(url)
     
     if content and len(content) > 50:
-        st.session_state.scraping_status[url] = "Requests successful!"
+        st.session_state.scraping_status[url] = "Enhanced Selenium successful!"
         cleaned_content = clean_content(content)
-        print(f"✅ Requests extracted {len(cleaned_content)} characters from {url}")
-        return create_document(cleaned_content, url, title, "requests")
+        print(f"✅ Enhanced Selenium extracted {len(cleaned_content)} characters from {url}")
+        return create_document(cleaned_content, url, title, "selenium_enhanced")
     
-    # Method 2: Try Selenium for JavaScript-heavy sites
-    st.session_state.scraping_status[url] = "Trying Selenium (JavaScript)..."
-    content, title = extract_with_selenium(url)
+    # Rest of your existing methods...
+    # ... [keep your existing requests and simple methods] ...
+
+def clean_content(content):
+    """Clean extracted content"""
+    if not content:
+        return ""
     
-    if content and len(content) > 50:
-        st.session_state.scraping_status[url] = "Selenium successful!"
-        cleaned_content = clean_content(content)
-        print(f"✅ Selenium extracted {len(cleaned_content)} characters from {url}")
-        return create_document(cleaned_content, url, title, "selenium")
+    content = re.sub(r'\s+', ' ', content)
+    sentences = [sentence.strip() for sentence in content.split('.') if len(sentence.strip()) > 20]
+    cleaned_content = '. '.join(sentences)
     
-    # Method 3: Final fallback - very simple request
-    st.session_state.scraping_status[url] = "Trying simple request..."
-    try:
-        response = requests.get(url, timeout=15, headers={
-            'User-Agent': 'Mozilla/5.0 (compatible; Bot)'
-        })
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            # Remove only script and style
-            for script in soup(["script", "style"]):
-                script.decompose()
-            
-            content = soup.get_text()
-            cleaned_content = clean_content(content)
-            title = soup.title.string if soup.title else "Unknown Title"
-            
-            if len(cleaned_content) > 30:
-                st.session_state.scraping_status[url] = "Simple request successful!"
-                print(f"⚠️ Simple request extracted {len(cleaned_content)} characters from {url}")
-                return create_document(cleaned_content, url, title, "simple")
-        
-    except Exception as e:
-        print(f"❌ Simple request also failed for {url}: {e}")
-    
-    # All methods failed
-    error_msg = f"All extraction methods failed. Site may block bots or require authentication."
-    st.session_state.scraping_status[url] = "Failed - site may block bots"
-    print(f"❌ All methods failed for {url}")
-    return [Document(
-        page_content=error_msg,
-        metadata={"source": url, "title": "Failed to Load", "method": "failed", "error": error_msg}
-    )]
+    return cleaned_content.strip()
 
 def create_document(content, url, title, method):
     """Create LangChain Document object"""
@@ -344,9 +246,7 @@ def scrape_urls_to_chunks(urls):
 
     all_documents = []
     successful_urls = []
-    failed_urls = []
 
-    # Initialize scraping status
     if 'scraping_status' not in st.session_state:
         st.session_state.scraping_status = {}
 
@@ -356,12 +256,11 @@ def scrape_urls_to_chunks(urls):
         
         documents = scrape_webpage(url)
 
-        if documents and len(documents[0].page_content) > 50 and not documents[0].page_content.startswith("All extraction methods failed"):
+        if documents and len(documents[0].page_content) > 50:
             all_documents.extend(documents)
             successful_urls.append(url)
             print(f"✅ Successfully processed: {url}")
         else:
-            failed_urls.append(url)
             print(f"❌ Failed to process: {url}")
 
     if not all_documents:
@@ -369,9 +268,6 @@ def scrape_urls_to_chunks(urls):
         return None
 
     print(f"\n📊 Successfully scraped: {len(successful_urls)}/{len(urls)} URLs")
-    
-    if failed_urls:
-        print(f"❌ Failed URLs: {failed_urls}")
 
     # Create chunks
     print("✂️ Creating text chunks...")
