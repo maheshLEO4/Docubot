@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import streamlit as st
+import os
 
 def is_selenium_available():
     """Check if Selenium is available in the current environment"""

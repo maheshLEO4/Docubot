@@ -1,21 +1,62 @@
 import os
 import shutil
-from langchain_community.embeddings import HuggingFaceEmbeddings  # Fixed import
-from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS, Qdrant
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
 from data_processing import get_document_chunks, get_existing_pdf_files
 from web_scraper import scrape_urls_to_chunks
+from auth import AuthManager
+from config import get_qdrant_config, validate_qdrant_config
 
-# --- Configuration ---
-DATA_PATH = "data/"
-DB_FAISS_PATH = "vectorstore/db_faiss"
+# Initialize auth manager
+auth_manager = AuthManager()
+
+def get_user_data_path():
+    """Get user-specific data path"""
+    return auth_manager.get_user_data_path()
+
+def get_user_db_faiss_path():
+    """Get user-specific vectorstore path"""
+    return auth_manager.get_user_vectorstore_path()
+
+def get_user_collection_name():
+    """Get user-specific Qdrant collection name"""
+    user_id = auth_manager.get_user_id()
+    return f"docubot_user_{user_id}" if user_id else "docubot_default"
+
+def get_vector_store_type():
+    """Determine which vector store to use (Qdrant Cloud or local FAISS)"""
+    qdrant_config = validate_qdrant_config()
+    return "qdrant" if qdrant_config else "faiss"
 
 def clear_all_data():
-    """Clears ALL data and vector store (manual option only)."""
-    if os.path.exists(DB_FAISS_PATH):
-        shutil.rmtree(DB_FAISS_PATH)
-    if os.path.exists(DATA_PATH):
-        shutil.rmtree(DATA_PATH)
-    os.makedirs(DATA_PATH, exist_ok=True)
+    """Clears ALL data and vector store for current user."""
+    vector_store_type = get_vector_store_type()
+    
+    if vector_store_type == "faiss":
+        user_db_path = get_user_db_faiss_path()
+        user_data_path = get_user_data_path()
+        
+        if os.path.exists(user_db_path):
+            shutil.rmtree(user_db_path)
+        if os.path.exists(user_data_path):
+            shutil.rmtree(user_data_path)
+        
+        os.makedirs(user_data_path, exist_ok=True)
+    else:
+        # Clear Qdrant collection
+        try:
+            qdrant_config = get_qdrant_config()
+            client = QdrantClient(
+                url=qdrant_config['url'],
+                api_key=qdrant_config['api_key']
+            )
+            collection_name = get_user_collection_name()
+            client.delete_collection(collection_name=collection_name)
+        except Exception as e:
+            print(f"Warning: Could not clear Qdrant collection: {e}")
+    
     return "🧹 Cleared ALL data and vector store!"
 
 def get_embedding_model():
@@ -26,32 +67,83 @@ def get_embedding_model():
         encode_kwargs={'normalize_embeddings': True}
     )
 
-def build_vector_store(append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS_PATH):
-    """Builds or updates the FAISS vector store from PDF documents."""
+def get_qdrant_vector_store(collection_name=None):
+    """Get Qdrant vector store for current user"""
+    if collection_name is None:
+        collection_name = get_user_collection_name()
+    
+    qdrant_config = get_qdrant_config()
+    if not qdrant_config['api_key'] or not qdrant_config['url']:
+        return None
+    
+    try:
+        client = QdrantClient(
+            url=qdrant_config['url'],
+            api_key=qdrant_config['api_key']
+        )
+        
+        embedding_model = get_embedding_model()
+        
+        # Create collection if it doesn't exist
+        from qdrant_client.models import Distance, VectorParams
+        try:
+            client.get_collection(collection_name=collection_name)
+        except Exception:
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+            )
+        
+        vector_store = QdrantVectorStore(
+            client=client,
+            collection_name=collection_name,
+            embeddings=embedding_model
+        )
+        
+        return vector_store
+    except Exception as e:
+        print(f"Error initializing Qdrant: {e}")
+        return None
+
+def build_vector_store(append=False):
+    """Builds or updates the vector store from PDF documents for current user."""
+    vector_store_type = get_vector_store_type()
+    data_path = get_user_data_path()
     
     # Track processed files
     processed_files_path = os.path.join(data_path, "processed_files.txt")
     
-    if append and os.path.exists(db_faiss_path):
-        print("🔄 Loading existing vector store...")
-        embedding_model = get_embedding_model()
-        try:
-            db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
-            
-            # Load already processed files
+    if vector_store_type == "qdrant":
+        db = get_qdrant_vector_store()
+        if append and db:
+            # For Qdrant, we always add documents (deduplication happens at query time)
+            existing_files = set()
             if os.path.exists(processed_files_path):
                 with open(processed_files_path, 'r') as f:
                     existing_files = set(line.strip() for line in f)
-            else:
-                existing_files = set()
-                
-        except Exception as e:
-            print(f"Error loading existing vector store: {str(e)}")
+        else:
             db = None
             existing_files = set()
     else:
-        db = None
-        existing_files = set()
+        # FAISS logic
+        db_faiss_path = get_user_db_faiss_path()
+        if append and os.path.exists(db_faiss_path):
+            print("🔄 Loading existing vector store...")
+            embedding_model = get_embedding_model()
+            try:
+                db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
+                if os.path.exists(processed_files_path):
+                    with open(processed_files_path, 'r') as f:
+                        existing_files = set(line.strip() for line in f)
+                else:
+                    existing_files = set()
+            except Exception as e:
+                print(f"Error loading existing vector store: {str(e)}")
+                db = None
+                existing_files = set()
+        else:
+            db = None
+            existing_files = set()
     
     # Get chunks and file information
     if append and db is not None:
@@ -70,7 +162,7 @@ def build_vector_store(append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS
         # For new vector store, process all files
         chunks, processed_files = get_document_chunks(data_path)
         files_to_mark = [os.path.basename(f) for f in processed_files] if processed_files else []
-        existing_files = set()  # Reset for new vector store
+        existing_files = set()
     
     if not chunks:
         print("❌ No chunks generated from documents.")
@@ -82,9 +174,19 @@ def build_vector_store(append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS
     print("💾 Building/updating vector database...")
     
     if db is None:
-        # Create new vector store
-        db = FAISS.from_documents(chunks, embedding_model)
-        action = "created"
+        if vector_store_type == "qdrant":
+            db = get_qdrant_vector_store()
+            if db:
+                db.add_documents(chunks)
+                action = "created"
+            else:
+                # Fallback to FAISS if Qdrant fails
+                db = FAISS.from_documents(chunks, embedding_model)
+                action = "created_faiss_fallback"
+        else:
+            db = FAISS.from_documents(chunks, embedding_model)
+            action = "created"
+        
         # Mark all files as processed
         with open(processed_files_path, 'w') as f:
             for file_name in files_to_mark:
@@ -98,7 +200,10 @@ def build_vector_store(append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS
             for file_name in files_to_mark:
                 f.write(file_name + '\n')
     
-    db.save_local(db_faiss_path)
+    # Save FAISS locally if using FAISS
+    if vector_store_type == "faiss" and isinstance(db, FAISS):
+        db_faiss_path = get_user_db_faiss_path()
+        db.save_local(db_faiss_path)
     
     # Show what was processed
     if files_to_mark:
@@ -108,10 +213,14 @@ def build_vector_store(append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS
     
     return db, action
 
-def build_vector_store_from_urls(urls, append=False, data_path=DATA_PATH, db_faiss_path=DB_FAISS_PATH):
+def build_vector_store_from_urls(urls, append=False):
     """
-    Build vector store from webpage URLs with deduplication
+    Build vector store from webpage URLs with deduplication for current user
+    Uses your existing web scraping functionality
     """
+    vector_store_type = get_vector_store_type()
+    data_path = get_user_data_path()
+    
     # Ensure data directory exists
     os.makedirs(data_path, exist_ok=True)
     
@@ -134,15 +243,21 @@ def build_vector_store_from_urls(urls, append=False, data_path=DATA_PATH, db_fai
     if not new_urls:
         print("ℹ️ No new URLs to process. All URLs are already in the vector store.")
         # Try to load existing vector store
-        if os.path.exists(db_faiss_path):
-            embedding_model = get_embedding_model()
-            db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
-            return db, "no_new_urls"
+        if vector_store_type == "qdrant":
+            db = get_qdrant_vector_store()
+            return db, "no_new_urls" if db else None
+        else:
+            db_faiss_path = get_user_db_faiss_path()
+            if os.path.exists(db_faiss_path):
+                embedding_model = get_embedding_model()
+                db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
+                return db, "no_new_urls"
         return None, "no_new_urls"
     
     print(f"🌐 Starting web scraping for {len(new_urls)} new URL(s)...")
     print(f"📋 URLs to scrape: {', '.join(new_urls)}")
     
+    # Use your existing web scraping function
     chunks = scrape_urls_to_chunks(new_urls)
     
     if not chunks:
@@ -152,26 +267,53 @@ def build_vector_store_from_urls(urls, append=False, data_path=DATA_PATH, db_fai
     print("🔧 Creating/updating embeddings...")
     embedding_model = get_embedding_model()
     
-    if append and os.path.exists(db_faiss_path):
-        print("🔄 Loading existing vector store...")
-        try:
-            db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
-            db.add_documents(chunks)
-            action = "updated"
-        except Exception as e:
-            print(f"Error loading existing store: {e}")
+    if vector_store_type == "qdrant":
+        if append:
+            db = get_qdrant_vector_store()
+            if db:
+                db.add_documents(chunks)
+                action = "updated"
+            else:
+                db = get_qdrant_vector_store()
+                if db:
+                    db.add_documents(chunks)
+                    action = "created"
+                else:
+                    # Fallback to FAISS
+                    db = FAISS.from_documents(chunks, embedding_model)
+                    action = "created_faiss_fallback"
+        else:
+            db = get_qdrant_vector_store()
+            if db:
+                db.add_documents(chunks)
+                action = "created"
+            else:
+                db = FAISS.from_documents(chunks, embedding_model)
+                action = "created_faiss_fallback"
+    else:
+        # FAISS logic
+        db_faiss_path = get_user_db_faiss_path()
+        if append and os.path.exists(db_faiss_path):
+            print("🔄 Loading existing vector store...")
+            try:
+                db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
+                db.add_documents(chunks)
+                action = "updated"
+            except Exception as e:
+                print(f"Error loading existing store: {e}")
+                db = FAISS.from_documents(chunks, embedding_model)
+                action = "created"
+        else:
             db = FAISS.from_documents(chunks, embedding_model)
             action = "created"
-            existing_urls = set()  # Reset for new vector store
-    else:
-        db = FAISS.from_documents(chunks, embedding_model)
-        action = "created"
-        existing_urls = set()  # Reset for new vector store
     
-    db.save_local(db_faiss_path)
+    # Save FAISS locally if using FAISS
+    if isinstance(db, FAISS):
+        db_faiss_path = get_user_db_faiss_path()
+        db.save_local(db_faiss_path)
     
     # Save processed URLs
-    if action == "created":
+    if action in ["created", "created_faiss_fallback"]:
         # Write all URLs (overwrite)
         with open(processed_urls_path, 'w') as f:
             for url in new_urls:
@@ -187,16 +329,43 @@ def build_vector_store_from_urls(urls, append=False, data_path=DATA_PATH, db_fai
     
     return db, action
 
-def get_vector_store(db_faiss_path=DB_FAISS_PATH):
-    """Cached vector store to avoid reloading."""
-    try:
-        embedding_model = get_embedding_model()
-        db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
-        return db
-    except Exception as e:
-        print(f"Error loading vector store: {str(e)}")
-        return None
+def get_vector_store():
+    """Get vector store for current user"""
+    vector_store_type = get_vector_store_type()
+    
+    if vector_store_type == "qdrant":
+        return get_qdrant_vector_store()
+    else:
+        # FAISS fallback
+        db_faiss_path = get_user_db_faiss_path()
+        try:
+            embedding_model = get_embedding_model()
+            db = FAISS.load_local(db_faiss_path, embedding_model, allow_dangerous_deserialization=True)
+            return db
+        except Exception as e:
+            print(f"Error loading vector store: {str(e)}")
+            return None
 
-def vector_store_exists(db_faiss_path=DB_FAISS_PATH):
-    """Check if vector store exists."""
-    return os.path.exists(db_faiss_path)
+def vector_store_exists():
+    """Check if vector store exists for current user"""
+    vector_store_type = get_vector_store_type()
+    
+    if vector_store_type == "qdrant":
+        db = get_qdrant_vector_store()
+        if db:
+            # Check if collection has any vectors
+            try:
+                qdrant_config = get_qdrant_config()
+                client = QdrantClient(
+                    url=qdrant_config['url'],
+                    api_key=qdrant_config['api_key']
+                )
+                collection_name = get_user_collection_name()
+                collection_info = client.get_collection(collection_name=collection_name)
+                return collection_info.points_count > 0
+            except:
+                return False
+        return False
+    else:
+        db_faiss_path = get_user_db_faiss_path()
+        return os.path.exists(db_faiss_path)

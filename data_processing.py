@@ -2,18 +2,29 @@ import os
 import concurrent.futures
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from auth import AuthManager
 
-# --- Configuration ---
-DATA_PATH = "data/"
+# Initialize auth manager
+auth_manager = AuthManager()
 
-def get_existing_pdf_files(data_path=DATA_PATH):
-    """Get list of existing PDF files in data directory."""
+def get_user_data_path():
+    """Get user-specific data path"""
+    return auth_manager.get_user_data_path()
+
+def get_existing_pdf_files(data_path=None):
+    """Get list of existing PDF files in user's data directory."""
+    if data_path is None:
+        data_path = get_user_data_path()
+    
     if not os.path.exists(data_path):
         return []
     return [f for f in os.listdir(data_path) if f.endswith('.pdf')]
 
-def save_uploaded_files(uploaded_files, data_path=DATA_PATH):
-    """Saves uploaded files to the data directory without clearing existing files."""
+def save_uploaded_files(uploaded_files, data_path=None):
+    """Saves uploaded files to the user's data directory without clearing existing files."""
+    if data_path is None:
+        data_path = get_user_data_path()
+    
     if not os.path.exists(data_path):
         os.makedirs(data_path)
     
@@ -28,8 +39,11 @@ def save_uploaded_files(uploaded_files, data_path=DATA_PATH):
     
     return new_files
 
-def load_pdf_files(file_paths=None, data_path=DATA_PATH):
+def load_pdf_files(file_paths=None, data_path=None):
     """Load PDF files with progress tracking."""
+    if data_path is None:
+        data_path = get_user_data_path()
+    
     if file_paths is None:
         file_paths = [os.path.join(data_path, f) for f in os.listdir(data_path) if f.endswith('.pdf')]
     
@@ -65,8 +79,11 @@ def split_documents_into_chunks(documents):
     print(f"✅ Created {len(chunks)} chunks from {len(documents)} documents")
     return chunks
 
-def get_document_chunks(data_path=DATA_PATH, file_paths=None):
+def get_document_chunks(data_path=None, file_paths=None):
     """Main function to load PDFs and return chunks."""
+    if data_path is None:
+        data_path = get_user_data_path()
+    
     print("📂 Scanning for PDF documents...")
     
     # Get all PDF files in data directory

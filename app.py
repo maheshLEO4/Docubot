@@ -4,13 +4,21 @@ import streamlit as st
 from data_processing import get_existing_pdf_files, save_uploaded_files
 from vector_store import (
     clear_all_data, build_vector_store, build_vector_store_from_urls,
-    get_vector_store, vector_store_exists, DATA_PATH, DB_FAISS_PATH
+    get_vector_store, vector_store_exists, get_user_data_path, get_vector_store_type
 )
 from query_processor import process_query
-from config import validate_api_key  # Import from config
+from config import validate_api_key, validate_qdrant_config
+from auth import setup_authentication, AuthManager
 
 # --- Configuration ---
 st.set_page_config(page_title="DocuBot AI 🤖", page_icon="🤖", layout="wide")
+
+# Initialize authentication
+if 'auth_manager' not in st.session_state:
+    st.session_state.auth_manager = AuthManager()
+
+# Setup authentication UI
+setup_authentication()
 
 # Get API key (this will show error if not found)
 try:
@@ -18,6 +26,10 @@ try:
 except ValueError as e:
     st.error(str(e))
     st.stop()
+
+# Check Qdrant configuration
+qdrant_config = validate_qdrant_config()
+vector_store_type = get_vector_store_type()
 
 # Initialize session state
 if 'messages' not in st.session_state:
@@ -31,6 +43,12 @@ if 'db_loaded' not in st.session_state:
 with st.sidebar:
     st.title("📄 DocuBot Controls")
     st.markdown("Upload PDFs or add websites to build your knowledge base.")
+    
+    # Show storage type
+    if vector_store_type == "qdrant":
+        st.success("🔗 Using Qdrant Cloud Storage")
+    else:
+        st.info("💾 Using Local FAISS Storage")
     
     # Tab for different input methods
     input_tab1, input_tab2 = st.tabs(["📁 Upload PDFs", "🌐 Add Websites"])
@@ -46,7 +64,7 @@ with st.sidebar:
     with input_tab2:
         website_urls = st.text_area(
             "Website URLs",
-            placeholder="Enter one or more URLs (one per line)\nExample:\nhttps://example.com\nhttps://another-site.com",
+            placeholder="Enter one or more URLs (one per line)\nExample:\nhttps://example.com\nhttps://docs.python.org\nhttps://en.wikipedia.org",
             help="Add websites to scrape and include in your knowledge base"
         )
         urls_list = [url.strip() for url in website_urls.split('\n') if url.strip()] if website_urls else []
@@ -59,7 +77,7 @@ with st.sidebar:
     vector_store_exists_flag = vector_store_exists()
     
     if vector_store_exists_flag:
-        st.success("✅ Vector store exists")
+        st.success("✅ Knowledge base exists")
         existing_files = get_existing_pdf_files()
         st.write(f"**Current documents:** {len(existing_files)}")
         
@@ -69,7 +87,7 @@ with st.sidebar:
             help="Choose whether to add new content or replace everything"
         )
     else:
-        st.info("📝 No vector store found. Will create new one.")
+        st.info("📝 No knowledge base found. Will create new one.")
         processing_mode = "Replace All Content"
     
     # File size warnings
@@ -100,60 +118,72 @@ with st.sidebar:
     # Processing logic
     if process_pdfs and uploaded_files:
         with st.spinner("Processing PDF documents..."):
-            new_files = save_uploaded_files(uploaded_files)
-            
-            if processing_mode == "Replace All Content":
-                if os.path.exists(DB_FAISS_PATH):
-                    shutil.rmtree(DB_FAISS_PATH)
-                db, action = build_vector_store(append=False)
-            else:
-                db, action = build_vector_store(append=True)
-            
-            if db is not None and action != "no_new_files":
-                st.session_state.is_processed = True
-                st.session_state.db_loaded = True
-                st.success(f"✅ PDF documents {action} successfully!")
-                if new_files:
-                    st.toast(f"Added {len(new_files)} new documents", icon="📄")
-            elif action == "no_new_files":
-                st.info("ℹ️ No new PDF documents to process.")
-            else:
-                st.error("❌ Failed to process PDF documents.")
+            try:
+                new_files = save_uploaded_files(uploaded_files)
+                
+                if processing_mode == "Replace All Content":
+                    # For Qdrant, we don't need to delete local paths
+                    if vector_store_type == "faiss":
+                        user_db_path = st.session_state.auth_manager.get_user_vectorstore_path()
+                        if os.path.exists(user_db_path):
+                            shutil.rmtree(user_db_path)
+                    db, action = build_vector_store(append=False)
+                else:
+                    db, action = build_vector_store(append=True)
+                
+                if db is not None and action != "no_new_files":
+                    st.session_state.is_processed = True
+                    st.session_state.db_loaded = True
+                    st.success(f"✅ PDF documents {action} successfully!")
+                    if new_files:
+                        st.toast(f"Added {len(new_files)} new documents", icon="📄")
+                elif action == "no_new_files":
+                    st.info("ℹ️ No new PDF documents to process.")
+                else:
+                    st.error("❌ Failed to process PDF documents.")
+            except Exception as e:
+                st.error(f"❌ Error processing PDFs: {str(e)}")
             st.rerun()
     
     if process_websites and urls_list:
         with st.spinner(f"Scraping {len(urls_list)} website(s)..."):
-            # Show scraping progress
-            status_container = st.empty()
-            
-            if processing_mode == "Replace All Content":
-                if os.path.exists(DB_FAISS_PATH):
-                    shutil.rmtree(DB_FAISS_PATH)
-                db, action = build_vector_store_from_urls(urls_list, append=False, data_path=DATA_PATH)
-            else:
-                db, action = build_vector_store_from_urls(urls_list, append=True, data_path=DATA_PATH)
-            
-            # Clear scraping status
-            if 'scraping_status' in st.session_state:
-                del st.session_state.scraping_status
-            
-            if db is not None and action not in ["no_new_urls", "failed"]:
-                st.session_state.is_processed = True
-                st.session_state.db_loaded = True
-                st.success(f"✅ Websites {action} successfully!")
-                st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
-            elif action == "no_new_urls":
-                st.info("ℹ️ No new URLs to process. All URLs are already in the knowledge base.")
-            elif action == "failed":
-                st.error("❌ Failed to scrape websites.")
-                st.warning("""
-                **⚠️ Scraping Limitations:**
-                - ✅ Works: News sites, blogs, documentation, Wikipedia, most content sites
-                - ❌ Doesn't work on cloud: Client-side React/Vue/Angular apps
-                - 💡 For React apps: Run this app locally with Playwright installed
-                """)
-            else:
-                st.error("❌ Failed to scrape websites.")
+            try:
+                # Show scraping progress
+                status_container = st.empty()
+                
+                if processing_mode == "Replace All Content":
+                    # For Qdrant, we don't need to delete local paths
+                    if vector_store_type == "faiss":
+                        user_db_path = st.session_state.auth_manager.get_user_vectorstore_path()
+                        if os.path.exists(user_db_path):
+                            shutil.rmtree(user_db_path)
+                    db, action = build_vector_store_from_urls(urls_list, append=False)
+                else:
+                    db, action = build_vector_store_from_urls(urls_list, append=True)
+                
+                # Clear scraping status
+                if 'scraping_status' in st.session_state:
+                    del st.session_state.scraping_status
+                
+                if db is not None and action not in ["no_new_urls", "failed"]:
+                    st.session_state.is_processed = True
+                    st.session_state.db_loaded = True
+                    st.success(f"✅ Websites {action} successfully!")
+                    st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
+                elif action == "no_new_urls":
+                    st.info("ℹ️ No new URLs to process. All URLs are already in the knowledge base.")
+                elif action == "failed":
+                    st.error("❌ Failed to scrape websites.")
+                    st.warning("""
+                    **⚠️ Scraping Limitations:**
+                    - ✅ Works: News sites, blogs, documentation, Wikipedia, most content sites
+                    - ❌ Doesn't work on cloud: Client-side React/Vue/Angular apps
+                    - 💡 For React apps: Run this app locally with Chrome/Selenium installed
+                    """)
+                else:
+                    st.error("❌ Failed to scrape websites.")
+            except Exception as e:
+                st.error(f"❌ Error scraping websites: {str(e)}")
             st.rerun()
             
     st.markdown("---")
@@ -162,35 +192,41 @@ with st.sidebar:
         st.toast("Chat history cleared!", icon="🧹")
     
     # Display document info
-    if st.session_state.get('is_processed', False) and os.path.exists(DATA_PATH):
-        st.markdown("---")
-        st.subheader("📊 Knowledge Base Info")
-        
-        # Show PDF files
-        pdf_files = get_existing_pdf_files()
-        st.write(f"**Total PDF documents:** {len(pdf_files)}")
-        if pdf_files:
-            for pdf in pdf_files[-5:]:
-                file_path = os.path.join(DATA_PATH, pdf)
-                if os.path.exists(file_path):
-                    file_size = os.path.getsize(file_path) / (1024 * 1024)
-                    st.caption(f"• {pdf} ({file_size:.1f} MB)")
-                else:
-                    st.caption(f"• {pdf} (file not found)")
-            if len(pdf_files) > 5:
-                st.caption(f"... and {len(pdf_files) - 5} more documents")
-        
-        # Show scraped URLs
-        processed_urls_path = os.path.join(DATA_PATH, "processed_urls.txt")
-        if os.path.exists(processed_urls_path):
-            with open(processed_urls_path, 'r') as f:
-                urls = [line.strip() for line in f if line.strip()]
-            if urls:
-                st.write(f"**Total scraped URLs:** {len(urls)}")
-                for url in urls[-5:]:
-                    st.caption(f"• {url}")
-                if len(urls) > 5:
-                    st.caption(f"... and {len(urls) - 5} more URLs")
+    if st.session_state.get('is_processed', False):
+        data_path = get_user_data_path()
+        if os.path.exists(data_path):
+            st.markdown("---")
+            st.subheader("📊 Knowledge Base Info")
+            
+            # Show PDF files
+            pdf_files = get_existing_pdf_files()
+            if pdf_files:
+                st.write(f"**Total PDF documents:** {len(pdf_files)}")
+                for pdf in pdf_files[-5:]:
+                    file_path = os.path.join(data_path, pdf)
+                    if os.path.exists(file_path):
+                        file_size = os.path.getsize(file_path) / (1024 * 1024)
+                        st.caption(f"• {pdf} ({file_size:.1f} MB)")
+                    else:
+                        st.caption(f"• {pdf} (file not found)")
+                if len(pdf_files) > 5:
+                    st.caption(f"... and {len(pdf_files) - 5} more documents")
+            else:
+                st.write("**PDF documents:** 0")
+            
+            # Show scraped URLs
+            processed_urls_path = os.path.join(data_path, "processed_urls.txt")
+            if os.path.exists(processed_urls_path):
+                with open(processed_urls_path, 'r') as f:
+                    urls = [line.strip() for line in f if line.strip()]
+                if urls:
+                    st.write(f"**Total scraped URLs:** {len(urls)}")
+                    for url in urls[-5:]:
+                        st.caption(f"• {url}")
+                    if len(urls) > 5:
+                        st.caption(f"... and {len(urls) - 5} more URLs")
+            else:
+                st.write("**Scraped URLs:** 0")
 
 # --- Main Chat ---
 st.title("🤖 DocuBot AI: Chat with Your Documents & Websites")
@@ -201,6 +237,12 @@ if not st.session_state.messages:
     if st.session_state.is_processed:
         doc_count = len(get_existing_pdf_files())
         st.success(f"✅ Ready! Your knowledge base is loaded and ready for questions.")
+        
+        # Show storage info
+        if vector_store_type == "qdrant":
+            st.info("💡 Using Qdrant Cloud for fast, scalable vector search")
+        else:
+            st.info("💡 Using local FAISS storage")
     else:
         st.info("📚 Upload PDFs or add websites in the sidebar to build your knowledge base.")
 
@@ -234,10 +276,22 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                 st.caption("Sources from your knowledge base")
                                 
                                 for i, doc in enumerate(source_documents, 1):
-                                    st.markdown(f"**Source {i}:** `{doc['document']}`")
+                                    # Show appropriate icon based on source type
+                                    source_icon = "🌐" if doc.get('type') == 'web' else "📄"
+                                    source_name = doc['document']
+                                    
+                                    # Truncate long URLs for display
+                                    if len(source_name) > 50:
+                                        display_name = source_name[:47] + "..."
+                                    else:
+                                        display_name = source_name
+                                    
+                                    st.markdown(f"**{source_icon} Source {i}:** `{display_name}`")
+                                    
                                     if doc['page'] != 'N/A':
-                                        st.caption(f"Page: {doc['page']}")
-                                    st.caption(f'"{doc["excerpt"]}"')
+                                        st.caption(f"**Page:** {doc['page']}")
+                                    
+                                    st.caption(f'**Excerpt:** "{doc["excerpt"]}"')
                                     st.markdown("---")
 
                     st.session_state.messages.append({'role': 'assistant', 'content': enhanced_result})
