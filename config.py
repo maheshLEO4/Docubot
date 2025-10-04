@@ -61,10 +61,14 @@ def get_google_oauth_config():
     """
     Get Google OAuth configuration
     """
+    # For Streamlit Cloud, the redirect URI is the app URL
+    app_url = os.environ.get('STREAMLIT_APP_URL', 'http://localhost:8501')
+    redirect_uri = f"{app_url}"
+    
     return {
         'client_id': get_api_key('GOOGLE_OAUTH_CLIENT_ID'),
         'client_secret': get_api_key('GOOGLE_OAUTH_CLIENT_SECRET'),
-        'redirect_uri': get_api_key('GOOGLE_OAUTH_REDIRECT_URI')
+        'redirect_uri': redirect_uri
     }
 
 def validate_production_config():
@@ -83,10 +87,8 @@ def validate_production_config():
     if not get_api_key('MONGODB_URI'):
         config_errors.append("MONGODB_URI")
     
-    if not get_api_key('GOOGLE_OAUTH_CLIENT_ID') or not get_api_key('GOOGLE_OAUTH_CLIENT_SECRET'):
-        config_errors.append("Google OAuth configuration")
-    
     if config_errors:
-        raise ValueError(f"Missing production configuration: {', '.join(config_errors)}")
+        st.warning(f"⚠️ Missing configuration: {', '.join(config_errors)}")
+        return False
     
     return True
