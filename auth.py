@@ -1,24 +1,29 @@
 import streamlit as st
 import hashlib
 import os
-from quadrant_cloud_client import QuadrantClient
+from qdrant_client import QdrantClient
 
 class AuthManager:
     def __init__(self):
-        self.config = self._get_quadrant_config()
-        self.quadrant_client = QuadrantClient(
-            api_key=self.config['api_key'],
-            api_secret=self.config['api_secret'],
-            base_url=self.config['base_url']
-        )
+        self.config = self._get_qdrant_config()
+        if self.config['api_key'] and self.config['url']:
+            try:
+                self.qdrant_client = QdrantClient(
+                    url=self.config['url'],
+                    api_key=self.config['api_key']
+                )
+            except Exception as e:
+                print(f"Qdrant client initialization failed: {e}")
+                self.qdrant_client = None
+        else:
+            self.qdrant_client = None
     
-    def _get_quadrant_config(self):
-        """Get Quadrant Cloud configuration"""
+    def _get_qdrant_config(self):
+        """Get Qdrant Cloud configuration"""
         from config import get_api_key
         return {
-            'api_key': get_api_key('QUADRANT_API_KEY'),
-            'api_secret': get_api_key('QUADRANT_API_SECRET'),
-            'base_url': get_api_key('QUADRANT_BASE_URL') or 'https://api.quadrant.io'
+            'api_key': get_api_key('QDRANT_API_KEY'),
+            'url': get_api_key('QDRANT_URL')
         }
     
     def get_user_id(self):
@@ -71,6 +76,8 @@ def setup_authentication():
                 if email and password:
                     # Simple demo authentication - replace with your actual auth system
                     user_id = hashlib.md5(email.encode()).hexdigest()
+                    if 'auth_manager' not in st.session_state:
+                        st.session_state.auth_manager = AuthManager()
                     st.session_state.auth_manager.initialize_user_session({
                         'id': user_id,
                         'email': email
@@ -89,6 +96,8 @@ def setup_authentication():
                 if new_email and new_password and confirm_password:
                     if new_password == confirm_password:
                         user_id = hashlib.md5(new_email.encode()).hexdigest()
+                        if 'auth_manager' not in st.session_state:
+                            st.session_state.auth_manager = AuthManager()
                         st.session_state.auth_manager.initialize_user_session({
                             'id': user_id,
                             'email': new_email

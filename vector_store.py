@@ -2,8 +2,8 @@ import os
 import shutil
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS, Qdrant
-from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
 from data_processing import get_document_chunks, get_existing_pdf_files
 from web_scraper import scrape_urls_to_chunks
 from auth import AuthManager
@@ -85,7 +85,6 @@ def get_qdrant_vector_store(collection_name=None):
         embedding_model = get_embedding_model()
         
         # Create collection if it doesn't exist
-        from qdrant_client.models import Distance, VectorParams
         try:
             client.get_collection(collection_name=collection_name)
         except Exception:
@@ -94,7 +93,7 @@ def get_qdrant_vector_store(collection_name=None):
                 vectors_config=VectorParams(size=384, distance=Distance.COSINE)
             )
         
-        vector_store = QdrantVectorStore(
+        vector_store = Qdrant(
             client=client,
             collection_name=collection_name,
             embeddings=embedding_model
@@ -241,7 +240,7 @@ def build_vector_store_from_urls(urls, append=False):
     new_urls = [url for url in urls if url not in existing_urls]
     
     if not new_urls:
-        print("ℹ️ No new URLs to process. All URLs are already in the vector store.")
+        print("ℹ️ No new URLs to process. All URLs are already in the knowledge base.")
         # Try to load existing vector store
         if vector_store_type == "qdrant":
             db = get_qdrant_vector_store()

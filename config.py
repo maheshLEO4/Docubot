@@ -57,14 +57,5 @@ def validate_qdrant_config():
     """
     config = get_qdrant_config()
     if not config['api_key'] or not config['url']:
-        st.warning("""
-        ⚠️ Qdrant Cloud not configured. Using local FAISS storage.
-        
-        To use Qdrant Cloud, add these to your secrets:
-        - QDRANT_API_KEY
-        - QDRANT_URL
-        
-        Get them from: https://cloud.qdrant.io
-        """)
         return None
     return config

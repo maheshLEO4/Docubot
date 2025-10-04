@@ -15,7 +15,6 @@ lxml>=4.9.0
 selenium>=4.15.0
 webdriver-manager>=4.0.0
 qdrant-client>=1.6.0
-langchain-qdrant>=0.1.0
 streamlit-authenticator>=0.2.0
 bcrypt>=4.0.0
 pyjwt>=2.0.0
