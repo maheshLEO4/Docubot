@@ -8,49 +8,40 @@ from auth import AuthManager
 auth_manager = AuthManager()
 
 def get_user_data_path():
-    """Get user-specific data path"""
-    return auth_manager.get_user_data_path()
+    """Get user-specific temporary data path"""
+    user_id = auth_manager.get_user_id()
+    if not user_id:
+        return None
+    temp_path = f"temp_uploads/user_{user_id}"
+    os.makedirs(temp_path, exist_ok=True)
+    return temp_path
 
-def get_existing_pdf_files(data_path=None):
-    """Get list of existing PDF files in user's data directory."""
-    if data_path is None:
-        data_path = get_user_data_path()
+def save_uploaded_files(uploaded_files):
+    """Save uploaded files to temporary storage and return file paths"""
+    data_path = get_user_data_path()
+    if not data_path:
+        raise ValueError("User not authenticated")
     
-    if not os.path.exists(data_path):
-        return []
-    return [f for f in os.listdir(data_path) if f.endswith('.pdf')]
-
-def save_uploaded_files(uploaded_files, data_path=None):
-    """Saves uploaded files to the user's data directory without clearing existing files."""
-    if data_path is None:
-        data_path = get_user_data_path()
-    
-    if not os.path.exists(data_path):
-        os.makedirs(data_path)
-    
-    new_files = []
+    file_paths = []
     for file in uploaded_files:
         file_path = os.path.join(data_path, file.name)
-        # Check if file already exists to avoid duplicates
-        if not os.path.exists(file_path):
-            with open(file_path, "wb") as f:
-                f.write(file.getbuffer())
-            new_files.append(file.name)
+        with open(file_path, "wb") as f:
+            f.write(file.getbuffer())
+        file_paths.append(file_path)
     
-    return new_files
+    return file_paths
 
-def load_pdf_files(file_paths=None, data_path=None):
-    """Load PDF files with progress tracking."""
-    if data_path is None:
-        data_path = get_user_data_path()
-    
-    if file_paths is None:
-        file_paths = [os.path.join(data_path, f) for f in os.listdir(data_path) if f.endswith('.pdf')]
-    
+def load_pdf_files(file_paths):
+    """Load PDF files"""
     def load_single_pdf(file_path):
         try:
             loader = PyPDFLoader(file_path)
-            return loader.load()
+            documents = loader.load()
+            # Add file source to metadata
+            for doc in documents:
+                doc.metadata['source'] = file_path
+                doc.metadata['type'] = 'pdf'
+            return documents
         except Exception as e:
             print(f"Warning: Error loading {os.path.basename(file_path)}: {str(e)}")
             return []
@@ -67,7 +58,7 @@ def load_pdf_files(file_paths=None, data_path=None):
     return documents
 
 def split_documents_into_chunks(documents):
-    """Split documents into chunks using recursive text splitter."""
+    """Split documents into chunks"""
     print("✂️ Splitting documents into chunks...")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
@@ -79,29 +70,24 @@ def split_documents_into_chunks(documents):
     print(f"✅ Created {len(chunks)} chunks from {len(documents)} documents")
     return chunks
 
-def get_document_chunks(data_path=None, file_paths=None):
-    """Main function to load PDFs and return chunks."""
-    if data_path is None:
+def get_document_chunks(file_paths=None):
+    """Main function to load PDFs and return chunks"""
+    if not file_paths:
         data_path = get_user_data_path()
+        if not data_path or not os.path.exists(data_path):
+            return None, []
+        file_paths = [os.path.join(data_path, f) for f in os.listdir(data_path) if f.endswith('.pdf')]
     
-    print("📂 Scanning for PDF documents...")
-    
-    # Get all PDF files in data directory
-    if file_paths is None:
-        all_pdf_files = [os.path.join(data_path, f) for f in os.listdir(data_path) if f.endswith('.pdf')]
-    else:
-        all_pdf_files = file_paths
-    
-    if not all_pdf_files:
+    if not file_paths:
         print("❌ No PDF files found to process.")
         return None, []
     
-    print(f"📄 Found {len(all_pdf_files)} PDF file(s) to process...")
-    documents = load_pdf_files(all_pdf_files, data_path)
+    print(f"📄 Found {len(file_paths)} PDF file(s) to process...")
+    documents = load_pdf_files(file_paths)
     
     if not documents:
         print("❌ No documents could be loaded from PDF files.")
         return None, []
     
     chunks = split_documents_into_chunks(documents)
-    return chunks, all_pdf_files
+    return chunks, file_paths

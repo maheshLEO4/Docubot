@@ -51,11 +51,42 @@ def get_qdrant_config():
         'url': get_api_key('QDRANT_URL')
     }
 
-def validate_qdrant_config():
+def get_mongodb_uri():
     """
-    Validate Qdrant Cloud configuration
+    Get MongoDB connection URI
     """
-    config = get_qdrant_config()
-    if not config['api_key'] or not config['url']:
-        return None
-    return config
+    return get_api_key('MONGODB_URI')
+
+def get_google_oauth_config():
+    """
+    Get Google OAuth configuration
+    """
+    return {
+        'client_id': get_api_key('GOOGLE_OAUTH_CLIENT_ID'),
+        'client_secret': get_api_key('GOOGLE_OAUTH_CLIENT_SECRET'),
+        'redirect_uri': get_api_key('GOOGLE_OAUTH_REDIRECT_URI')
+    }
+
+def validate_production_config():
+    """
+    Validate all production configuration
+    """
+    config_errors = []
+    
+    # Check required configurations
+    if not get_api_key('GROQ_API_KEY'):
+        config_errors.append("GROQ_API_KEY")
+    
+    if not get_api_key('QDRANT_API_KEY') or not get_api_key('QDRANT_URL'):
+        config_errors.append("Qdrant Cloud configuration")
+    
+    if not get_api_key('MONGODB_URI'):
+        config_errors.append("MONGODB_URI")
+    
+    if not get_api_key('GOOGLE_OAUTH_CLIENT_ID') or not get_api_key('GOOGLE_OAUTH_CLIENT_SECRET'):
+        config_errors.append("Google OAuth configuration")
+    
+    if config_errors:
+        raise ValueError(f"Missing production configuration: {', '.join(config_errors)}")
+    
+    return True

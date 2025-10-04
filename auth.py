@@ -1,122 +1,118 @@
 import streamlit as st
 import hashlib
 import os
-from qdrant_client import QdrantClient
+from google.oauth2 import id_token
+from google.auth.transport import requests
+from database import MongoDBManager
+from config import get_google_oauth_config
 
 class AuthManager:
     def __init__(self):
-        self.config = self._get_qdrant_config()
-        if self.config['api_key'] and self.config['url']:
-            try:
-                self.qdrant_client = QdrantClient(
-                    url=self.config['url'],
-                    api_key=self.config['api_key']
-                )
-            except Exception as e:
-                print(f"Qdrant client initialization failed: {e}")
-                self.qdrant_client = None
-        else:
-            self.qdrant_client = None
+        self.db = MongoDBManager()
+        self.oauth_config = get_google_oauth_config()
     
-    def _get_qdrant_config(self):
-        """Get Qdrant Cloud configuration"""
-        from config import get_api_key
-        return {
-            'api_key': get_api_key('QDRANT_API_KEY'),
-            'url': get_api_key('QDRANT_URL')
-        }
+    def verify_google_token(self, token):
+        """Verify Google OAuth token"""
+        try:
+            # Verify the token
+            idinfo = id_token.verify_oauth2_token(
+                token, 
+                requests.Request(), 
+                self.oauth_config['client_id']
+            )
+            
+            # Check token validity
+            if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+                raise ValueError('Wrong issuer.')
+            
+            # Get user data
+            user_id = hashlib.md5(idinfo['email'].encode()).hexdigest()
+            user_data = {
+                'user_id': user_id,
+                'email': idinfo['email'],
+                'name': idinfo.get('name', ''),
+                'picture': idinfo.get('picture', ''),
+                'google_id': idinfo['sub']
+            }
+            
+            # Initialize/update user in database
+            self.db.init_user(user_data)
+            self.db.update_last_login(user_id)
+            
+            return user_data
+            
+        except ValueError as e:
+            print(f"Google token verification failed: {e}")
+            return None
     
     def get_user_id(self):
         """Get current user ID from session state"""
         if 'user' not in st.session_state:
             return None
-        return st.session_state.user['id']
+        return st.session_state.user['user_id']
     
-    def get_user_vectorstore_path(self):
-        """Get user-specific vectorstore path"""
+    def get_user_collection_name(self):
+        """Get user-specific Qdrant collection name"""
         user_id = self.get_user_id()
-        if not user_id:
-            return None
-        return f"vectorstore/user_{user_id}"
+        return f"docubot_user_{user_id}" if user_id else "docubot_default"
     
-    def get_user_data_path(self):
-        """Get user-specific data path"""
-        user_id = self.get_user_id()
-        if not user_id:
-            return None
-        return f"data/user_{user_id}"
-    
-    def initialize_user_session(self, user_info):
-        """Initialize session state for authenticated user"""
-        st.session_state.user = user_info
-        st.session_state.is_authenticated = True
-        
-        # Initialize user-specific directories
-        user_data_path = self.get_user_data_path()
-        user_vectorstore_path = self.get_user_vectorstore_path()
-        
-        os.makedirs(user_data_path, exist_ok=True)
-        os.makedirs(user_vectorstore_path, exist_ok=True)
+    def get_user_data(self):
+        """Get current user data"""
+        return st.session_state.get('user')
 
 def setup_authentication():
-    """Setup authentication UI"""
+    """Setup Google OAuth authentication"""
     st.sidebar.title("🔐 Authentication")
     
-    if 'is_authenticated' not in st.session_state:
-        st.session_state.is_authenticated = False
+    if 'user' not in st.session_state:
+        st.session_state.user = None
     
-    if not st.session_state.is_authenticated:
-        auth_tab1, auth_tab2 = st.sidebar.tabs(["Login", "Register"])
+    if not st.session_state.user:
+        st.sidebar.info("Please sign in with Google to continue")
         
-        with auth_tab1:
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Password", type="password", key="login_password")
+        # Google OAuth button (you'll need to implement the OAuth flow)
+        # For Streamlit Cloud, you can use streamlit-google-oauth library
+        try:
+            from streamlit_google_oauth import st_google_oauth
+            oauth_url = st_google_oauth(
+                client_id=get_google_oauth_config()['client_id'],
+                client_secret=get_google_oauth_config()['client_secret'],
+                redirect_uri=get_google_oauth_config()['redirect_uri'],
+            )
             
-            if st.button("Login", use_container_width=True):
-                if email and password:
-                    # Simple demo authentication - replace with your actual auth system
+            if oauth_url:
+                st.sidebar.markdown(f'<a href="{oauth_url}" target="_self">Sign in with Google</a>', unsafe_allow_html=True)
+                
+        except ImportError:
+            # Fallback for local development
+            st.sidebar.warning("Google OAuth not configured. Using demo mode.")
+            
+            email = st.sidebar.text_input("Email (Demo Mode)")
+            if st.sidebar.button("Sign In (Demo)"):
+                if email:
                     user_id = hashlib.md5(email.encode()).hexdigest()
                     if 'auth_manager' not in st.session_state:
                         st.session_state.auth_manager = AuthManager()
-                    st.session_state.auth_manager.initialize_user_session({
-                        'id': user_id,
-                        'email': email
-                    })
-                    st.success("Login successful!")
+                    
+                    user_data = {
+                        'user_id': user_id,
+                        'email': email,
+                        'name': 'Demo User',
+                        'picture': ''
+                    }
+                    st.session_state.auth_manager.db.init_user(user_data)
+                    st.session_state.user = user_data
                     st.rerun()
-                else:
-                    st.error("Please enter email and password")
-        
-        with auth_tab2:
-            new_email = st.text_input("Email", key="register_email")
-            new_password = st.text_input("Password", type="password", key="register_password")
-            confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
-            
-            if st.button("Register", use_container_width=True):
-                if new_email and new_password and confirm_password:
-                    if new_password == confirm_password:
-                        user_id = hashlib.md5(new_email.encode()).hexdigest()
-                        if 'auth_manager' not in st.session_state:
-                            st.session_state.auth_manager = AuthManager()
-                        st.session_state.auth_manager.initialize_user_session({
-                            'id': user_id,
-                            'email': new_email
-                        })
-                        st.success("Registration successful!")
-                        st.rerun()
-                    else:
-                        st.error("Passwords don't match")
-                else:
-                    st.error("Please fill all fields")
         
         st.stop()
     else:
-        # User is authenticated - show user info and logout button
-        user_email = st.session_state.user.get('email', 'User')
-        st.sidebar.success(f"👋 Welcome, {user_email}!")
+        # User is authenticated
+        user_data = st.session_state.user
+        st.sidebar.success(f"👋 Welcome, {user_data['name']}!")
+        st.sidebar.caption(f"Signed in as: {user_data['email']}")
         
-        if st.sidebar.button("Logout", use_container_width=True):
-            # Clear all session state
+        if st.sidebar.button("Sign Out", use_container_width=True):
+            # Clear session state
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
