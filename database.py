@@ -9,14 +9,25 @@ class MongoDBManager:
     def __init__(self):
         self.client = None
         self.db = None
+        self.users = None
+        self.file_uploads = None
+        self.web_scrapes = None
+        self.query_logs = None
         self.connect()
     
     def connect(self):
-        """Connect to MongoDB"""
+        """Connect to MongoDB and initialize collections"""
         try:
             mongodb_uri = get_mongodb_uri()
             self.client = MongoClient(mongodb_uri)
             self.db = self.client.docubot
+            
+            # Initialize collections
+            self.users = self.db.users
+            self.file_uploads = self.db.file_uploads
+            self.web_scrapes = self.db.web_scrapes
+            self.query_logs = self.db.query_logs
+            
             print("✅ Connected to MongoDB")
         except Exception as e:
             print(f"❌ MongoDB connection failed: {e}")
@@ -37,7 +48,7 @@ class MongoDBManager:
             'is_active': True
         }
         
-        result = self.db.users.update_one(
+        result = self.users.update_one(
             {'user_id': user_data['user_id']},
             {'$set': user_record},
             upsert=True
@@ -46,11 +57,11 @@ class MongoDBManager:
     
     def get_user_by_email(self, email):
         """Get user by email"""
-        return self.db.users.find_one({'email': email})
+        return self.users.find_one({'email': email})
     
     def update_last_login(self, user_id):
         """Update user's last login timestamp"""
-        self.db.users.update_one(
+        self.users.update_one(
             {'user_id': user_id},
             {'$set': {'last_login': self.get_current_time()}}
         )
@@ -68,7 +79,7 @@ class MongoDBManager:
             'status': 'processed'
         }
         
-        self.db.file_uploads.insert_one(upload_record)
+        self.file_uploads.insert_one(upload_record)
         return upload_id
     
     def log_web_scrape(self, user_id, urls, successful_urls, total_chunks):
@@ -84,7 +95,7 @@ class MongoDBManager:
             'status': 'completed'
         }
         
-        self.db.web_scrapes.insert_one(scrape_record)
+        self.web_scrapes.insert_one(scrape_record)
         return scrape_id
     
     def log_query(self, user_id, query, response, sources_used, processing_time):
@@ -100,28 +111,28 @@ class MongoDBManager:
             'queried_at': self.get_current_time()
         }
         
-        self.db.query_logs.insert_one(query_record)
+        self.query_logs.insert_one(query_record)
         return query_id
     
     def get_user_files(self, user_id):
         """Get all files uploaded by user"""
-        return list(self.db.file_uploads.find(
+        return list(self.file_uploads.find(
             {'user_id': user_id},
             sort=[('uploaded_at', -1)]
         ))
     
     def get_user_scrapes(self, user_id):
         """Get all web scrapes by user"""
-        return list(self.db.web_scrapes.find(
+        return list(self.web_scrapes.find(
             {'user_id': user_id},
             sort=[('scraped_at', -1)]
         ))
     
     def get_user_stats(self, user_id):
         """Get user statistics"""
-        files_count = self.db.file_uploads.count_documents({'user_id': user_id})
-        scrapes_count = self.db.web_scrapes.count_documents({'user_id': user_id})
-        queries_count = self.db.query_logs.count_documents({'user_id': user_id})
+        files_count = self.file_uploads.count_documents({'user_id': user_id})
+        scrapes_count = self.web_scrapes.count_documents({'user_id': user_id})
+        queries_count = self.query_logs.count_documents({'user_id': user_id})
         
         return {
             'files_uploaded': files_count,
