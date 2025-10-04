@@ -1,194 +1,174 @@
 import streamlit as st
 import hashlib
-import os
-import requests
-import urllib.parse
-from config import get_google_oauth_config
+import bcrypt
 from database import MongoDBManager
 
 class AuthManager:
     def __init__(self):
-        self.oauth_config = get_google_oauth_config()
         self.db = MongoDBManager()
     
-    def get_google_oauth_url(self):
-        """Generate Google OAuth URL"""
-        client_id = self.oauth_config['client_id']
-        redirect_uri = self.oauth_config['redirect_uri']
+    def hash_password(self, password):
+        """Hash a password using bcrypt"""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    def verify_password(self, password, hashed_password):
+        """Verify a password against its hash"""
+        return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+    
+    def register_user(self, email, password, name):
+        """Register a new user with email and password"""
+        if not email or not password:
+            return False, "Email and password are required"
         
-        # Google OAuth endpoint with proper encoding
-        params = {
-            'client_id': client_id,
-            'redirect_uri': redirect_uri,
-            'response_type': 'code',
-            'scope': 'openid email profile',
-            'access_type': 'offline',
-            'prompt': 'consent'
+        if len(password) < 6:
+            return False, "Password must be at least 6 characters"
+        
+        # Check if user already exists
+        existing_user = self.db.get_user_by_email(email)
+        if existing_user:
+            return False, "User already exists with this email"
+        
+        # Create user
+        user_id = hashlib.md5(email.encode()).hexdigest()
+        hashed_password = self.hash_password(password)
+        
+        user_record = {
+            'user_id': user_id,
+            'email': email,
+            'name': name,
+            'password_hash': hashed_password,
+            'auth_method': 'email_password',
+            'created_at': self.db.get_current_time(),
+            'last_login': self.db.get_current_time()
         }
         
-        auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
-        return auth_url
+        # Save to database
+        self.db.users.insert_one(user_record)
+        return True, "Registration successful"
     
-    def exchange_code_for_token(self, code):
-        """Exchange authorization code for access token"""
-        try:
-            token_url = "https://oauth2.googleapis.com/token"
-            data = {
-                'client_id': self.oauth_config['client_id'],
-                'client_secret': self.oauth_config['client_secret'],
-                'code': code,
-                'grant_type': 'authorization_code',
-                'redirect_uri': self.oauth_config['redirect_uri']
-            }
-            
-            response = requests.post(token_url, data=data)
-            if response.status_code == 200:
-                token_data = response.json()
-                return token_data.get('access_token')
-            else:
-                print(f"Token exchange failed: {response.status_code} - {response.text}")
-                return None
-        except Exception as e:
-            print(f"Error exchanging code: {e}")
-            return None
-    
-    def get_google_user_info(self, access_token):
-        """Get user info from Google using access token"""
-        try:
-            userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
-            headers = {'Authorization': f'Bearer {access_token}'}
-            
-            response = requests.get(userinfo_url, headers=headers)
-            if response.status_code == 200:
-                user_data = response.json()
-                
-                # Create user record
-                user_id = hashlib.md5(user_data['email'].encode()).hexdigest()
-                user_record = {
-                    'user_id': user_id,
-                    'email': user_data['email'],
-                    'name': user_data.get('name', ''),
-                    'picture': user_data.get('picture', ''),
-                    'google_id': user_data['sub']
-                }
-                
-                # Initialize user in database
-                self.db.init_user(user_record)
-                self.db.update_last_login(user_id)
-                
-                return user_record
-            else:
-                print(f"Failed to get user info: {response.status_code} - {response.text}")
-                return None
-        except Exception as e:
-            print(f"Error getting user info: {e}")
-            return None
+    def login_user(self, email, password):
+        """Login user with email and password"""
+        if not email or not password:
+            return False, "Email and password are required", None
+        
+        # Find user in database
+        user_data = self.db.get_user_by_email(email)
+        if not user_data:
+            return False, "Invalid email or password", None
+        
+        # Verify password
+        if not self.verify_password(password, user_data['password_hash']):
+            return False, "Invalid email or password", None
+        
+        # Update last login
+        self.db.update_last_login(user_data['user_id'])
+        
+        return True, "Login successful", user_data
 
 def setup_authentication():
-    """Setup Google OAuth authentication"""
-    st.sidebar.title("🔐 Authentication")
+    """Setup email/password authentication"""
+    st.sidebar.title("🔐 DocuBot AI")
     
     if 'user' not in st.session_state:
         st.session_state.user = None
     if 'auth_manager' not in st.session_state:
         st.session_state.auth_manager = AuthManager()
     
-    # Display current redirect URI for debugging
-    oauth_config = get_google_oauth_config()
-    st.sidebar.caption(f"Redirect URI: {oauth_config['redirect_uri']}")
-    
-    # Check for OAuth callback
-    query_params = st.query_params
-    if 'code' in query_params and not st.session_state.user:
-        # We have an OAuth callback
-        code = query_params['code']
-        st.sidebar.info("Processing OAuth callback...")
-        
-        access_token = st.session_state.auth_manager.exchange_code_for_token(code)
-        
-        if access_token:
-            user_data = st.session_state.auth_manager.get_google_user_info(access_token)
-            if user_data:
-                st.session_state.user = user_data
-                # Clear the code from URL
-                st.query_params.clear()
-                st.rerun()
-            else:
-                st.sidebar.error("Failed to get user info from Google")
-        else:
-            st.sidebar.error("Failed to exchange authorization code")
-    
     if not st.session_state.user:
-        st.sidebar.info("Please sign in with Google to continue")
+        # Tabs for Login/Register
+        tab1, tab2 = st.sidebar.tabs(["Login", "Register"])
         
-        # Show Google OAuth button
-        oauth_url = st.session_state.auth_manager.get_google_oauth_url()
+        with tab1:
+            st.subheader("Login to Your Account")
+            login_email = st.text_input("Email", key="login_email")
+            login_password = st.text_input("Password", type="password", key="login_password")
+            
+            if st.button("Login", key="login_btn", use_container_width=True):
+                if login_email and login_password:
+                    success, message, user_data = st.session_state.auth_manager.login_user(login_email, login_password)
+                    if success:
+                        st.session_state.user = user_data
+                        st.success("Login successful!")
+                        st.rerun()
+                    else:
+                        st.error(message)
+                else:
+                    st.error("Please enter both email and password")
         
-        st.sidebar.markdown(
-            f"""
-            <a href="{oauth_url}" target="_self" style="
-                display: inline-block;
-                background: #4285F4;
-                color: white;
-                padding: 12px 24px;
-                text-decoration: none;
-                border-radius: 4px;
-                font-weight: bold;
-                text-align: center;
-                width: 100%;
-                border: none;
-                cursor: pointer;
-            ">
-            🔐 Sign in with Google
-            </a>
-            """,
-            unsafe_allow_html=True
-        )
+        with tab2:
+            st.subheader("Create New Account")
+            reg_email = st.text_input("Email", key="reg_email")
+            reg_name = st.text_input("Full Name", key="reg_name")
+            reg_password = st.text_input("Password", type="password", key="reg_password")
+            reg_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
+            
+            if st.button("Register", key="reg_btn", use_container_width=True):
+                if reg_email and reg_name and reg_password and reg_confirm:
+                    if reg_password != reg_confirm:
+                        st.error("Passwords do not match")
+                    else:
+                        success, message = st.session_state.auth_manager.register_user(reg_email, reg_password, reg_name)
+                        if success:
+                            st.success("Registration successful! Please login.")
+                        else:
+                            st.error(message)
+                else:
+                    st.error("Please fill all fields")
         
         st.sidebar.markdown("---")
-        st.sidebar.caption("Troubleshooting OAuth?")
-        st.sidebar.markdown("""
-        1. Go to [Google Cloud Console](https://console.cloud.google.com)
-        2. Add this exact URL to **Authorized redirect URIs**:
-        """)
-        st.sidebar.code(oauth_config['redirect_uri'])
+        st.sidebar.caption("Demo Accounts (Auto-login)")
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            if st.button("Demo User 1", use_container_width=True):
+                # Auto-create and login demo user
+                email = "demo1@docubot.com"
+                password = "demo123"
+                name = "Demo User 1"
+                
+                # Register if not exists
+                st.session_state.auth_manager.register_user(email, password, name)
+                # Login
+                success, message, user_data = st.session_state.auth_manager.login_user(email, password)
+                if success:
+                    st.session_state.user = user_data
+                    st.rerun()
         
-        st.sidebar.markdown("---")
-        st.sidebar.caption("Demo Mode (for testing)")
-        
-        # Demo mode fallback
-        email = st.sidebar.text_input("Email (Demo Mode)")
-        if st.sidebar.button("Sign In (Demo)", use_container_width=True):
-            if email:
-                user_id = hashlib.md5(email.encode()).hexdigest()
-                user_data = {
-                    'user_id': user_id,
-                    'email': email,
-                    'name': 'Demo User',
-                    'picture': '',
-                    'google_id': 'demo'
-                }
-                st.session_state.auth_manager.db.init_user(user_data)
-                st.session_state.user = user_data
-                st.rerun()
+        with col2:
+            if st.button("Demo User 2", use_container_width=True):
+                # Auto-create and login demo user
+                email = "demo2@docubot.com"
+                password = "demo123"
+                name = "Demo User 2"
+                
+                # Register if not exists
+                st.session_state.auth_manager.register_user(email, password, name)
+                # Login
+                success, message, user_data = st.session_state.auth_manager.login_user(email, password)
+                if success:
+                    st.session_state.user = user_data
+                    st.rerun()
         
         st.stop()
+    
     else:
         # User is authenticated
         user_data = st.session_state.user
         st.sidebar.success(f"👋 Welcome, {user_data['name']}!")
-        st.sidebar.caption(f"Signed in as: {user_data['email']}")
+        st.sidebar.caption(f"📧 {user_data['email']}")
         
         # Show user stats
         try:
             stats = st.session_state.auth_manager.db.get_user_stats(user_data['user_id'])
-            st.sidebar.metric("Files Uploaded", stats['files_uploaded'])
-            st.sidebar.metric("Queries Made", stats['queries_made'])
-        except:
-            pass
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                st.metric("📄 Files", stats['files_uploaded'])
+            with col2:
+                st.metric("💬 Queries", stats['queries_made'])
+        except Exception as e:
+            st.sidebar.info("📊 Stats will appear after you use the app")
         
-        if st.sidebar.button("Sign Out", use_container_width=True):
-            # Clear session state
+        # Sign out
+        if st.sidebar.button("🚪 Sign Out", use_container_width=True, type="secondary"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()

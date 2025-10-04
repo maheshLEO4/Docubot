@@ -57,16 +57,6 @@ def get_mongodb_uri():
     """
     return get_api_key('MONGODB_URI')
 
-def get_google_oauth_config():
-    """
-    Get Google OAuth configuration with your exact redirect URI
-    """
-    return {
-        'client_id': get_api_key('GOOGLE_OAUTH_CLIENT_ID'),
-        'client_secret': get_api_key('GOOGLE_OAUTH_CLIENT_SECRET'),
-        'redirect_uri': "https://docubotapp.streamlit.app/"
-    }
-
 def validate_production_config():
     """
     Validate all production configuration

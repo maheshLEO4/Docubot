@@ -22,14 +22,18 @@ class MongoDBManager:
             print(f"❌ MongoDB connection failed: {e}")
             raise
     
+    def get_current_time(self):
+        """Get current UTC time"""
+        return datetime.utcnow()
+    
     def init_user(self, user_data):
-        """Initialize user record"""
+        """Initialize user record (for backward compatibility)"""
         user_record = {
             'user_id': user_data['user_id'],
             'email': user_data['email'],
             'name': user_data.get('name', ''),
-            'created_at': datetime.utcnow(),
-            'last_login': datetime.utcnow(),
+            'created_at': self.get_current_time(),
+            'last_login': self.get_current_time(),
             'is_active': True
         }
         
@@ -40,11 +44,15 @@ class MongoDBManager:
         )
         return user_record
     
+    def get_user_by_email(self, email):
+        """Get user by email"""
+        return self.db.users.find_one({'email': email})
+    
     def update_last_login(self, user_id):
         """Update user's last login timestamp"""
         self.db.users.update_one(
             {'user_id': user_id},
-            {'$set': {'last_login': datetime.utcnow()}}
+            {'$set': {'last_login': self.get_current_time()}}
         )
     
     def log_file_upload(self, user_id, filename, file_size, pages_processed):
@@ -56,7 +64,7 @@ class MongoDBManager:
             'filename': filename,
             'file_size': file_size,
             'pages_processed': pages_processed,
-            'uploaded_at': datetime.utcnow(),
+            'uploaded_at': self.get_current_time(),
             'status': 'processed'
         }
         
@@ -72,7 +80,7 @@ class MongoDBManager:
             'urls': urls,
             'successful_urls': successful_urls,
             'total_chunks': total_chunks,
-            'scraped_at': datetime.utcnow(),
+            'scraped_at': self.get_current_time(),
             'status': 'completed'
         }
         
@@ -89,7 +97,7 @@ class MongoDBManager:
             'response_preview': response[:200] if response else '',
             'sources_count': len(sources_used),
             'processing_time': processing_time,
-            'queried_at': datetime.utcnow()
+            'queried_at': self.get_current_time()
         }
         
         self.db.query_logs.insert_one(query_record)
