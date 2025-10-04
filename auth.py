@@ -2,12 +2,10 @@ import streamlit as st
 import hashlib
 import os
 import requests
-from database import MongoDBManager
 from config import get_google_oauth_config
 
 class AuthManager:
     def __init__(self):
-        self.db = MongoDBManager()
         self.oauth_config = get_google_oauth_config()
     
     def get_google_oauth_url(self):
@@ -70,10 +68,6 @@ class AuthManager:
                     'google_id': user_data['sub']
                 }
                 
-                # Initialize/update user in database
-                self.db.init_user(user_record)
-                self.db.update_last_login(user_id)
-                
                 return user_record
             else:
                 print(f"Failed to get user info: {response.text}")
@@ -81,21 +75,6 @@ class AuthManager:
         except Exception as e:
             print(f"Error getting user info: {e}")
             return None
-    
-    def get_user_id(self):
-        """Get current user ID from session state"""
-        if 'user' not in st.session_state:
-            return None
-        return st.session_state.user['user_id']
-    
-    def get_user_collection_name(self):
-        """Get user-specific Qdrant collection name"""
-        user_id = self.get_user_id()
-        return f"docubot_user_{user_id}" if user_id else "docubot_default"
-    
-    def get_user_data(self):
-        """Get current user data"""
-        return st.session_state.get('user')
 
 def setup_authentication():
     """Setup Google OAuth authentication"""
@@ -161,7 +140,6 @@ def setup_authentication():
                     'picture': '',
                     'google_id': 'demo'
                 }
-                st.session_state.auth_manager.db.init_user(user_data)
                 st.session_state.user = user_data
                 st.rerun()
         
@@ -172,14 +150,10 @@ def setup_authentication():
         st.sidebar.success(f"👋 Welcome, {user_data['name']}!")
         st.sidebar.caption(f"Signed in as: {user_data['email']}")
         
-        # Show user stats
-        stats = st.session_state.auth_manager.db.get_user_stats(user_data['user_id'])
-        st.sidebar.metric("Files Uploaded", stats['files_uploaded'])
-        st.sidebar.metric("Queries Made", stats['queries_made'])
-        
         if st.sidebar.button("Sign Out", use_container_width=True):
             # Clear session state
             for key in list(st.session_state.keys()):
-                if key != 'auth_manager':  # Keep auth manager for performance
-                    del st.session_state[key]
+                del st.session_state[key]
             st.rerun()
+        
+        return user_data['user_id']

@@ -2,23 +2,20 @@ import os
 import concurrent.futures
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from auth import AuthManager
 
-# Initialize auth manager
-auth_manager = AuthManager()
+# Remove AuthManager import from here - we'll pass user_id as parameter
 
-def get_user_data_path():
+def get_user_data_path(user_id):
     """Get user-specific temporary data path"""
-    user_id = auth_manager.get_user_id()
     if not user_id:
         return None
     temp_path = f"temp_uploads/user_{user_id}"
     os.makedirs(temp_path, exist_ok=True)
     return temp_path
 
-def save_uploaded_files(uploaded_files):
+def save_uploaded_files(uploaded_files, user_id):
     """Save uploaded files to temporary storage and return file paths"""
-    data_path = get_user_data_path()
+    data_path = get_user_data_path(user_id)
     if not data_path:
         raise ValueError("User not authenticated")
     
@@ -30,6 +27,13 @@ def save_uploaded_files(uploaded_files):
         file_paths.append(file_path)
     
     return file_paths
+
+def get_existing_pdf_files(user_id):
+    """Get list of existing PDF files in user's data directory."""
+    data_path = get_user_data_path(user_id)
+    if not data_path or not os.path.exists(data_path):
+        return []
+    return [f for f in os.listdir(data_path) if f.endswith('.pdf')]
 
 def load_pdf_files(file_paths):
     """Load PDF files"""
@@ -70,10 +74,10 @@ def split_documents_into_chunks(documents):
     print(f"✅ Created {len(chunks)} chunks from {len(documents)} documents")
     return chunks
 
-def get_document_chunks(file_paths=None):
+def get_document_chunks(user_id, file_paths=None):
     """Main function to load PDFs and return chunks"""
     if not file_paths:
-        data_path = get_user_data_path()
+        data_path = get_user_data_path(user_id)
         if not data_path or not os.path.exists(data_path):
             return None, []
         file_paths = [os.path.join(data_path, f) for f in os.listdir(data_path) if f.endswith('.pdf')]

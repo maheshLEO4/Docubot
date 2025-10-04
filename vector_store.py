@@ -5,22 +5,20 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 from data_processing import get_document_chunks
 from web_scraper import scrape_urls_to_chunks
-from auth import AuthManager
 from config import get_qdrant_config
 from database import MongoDBManager
 
-# Initialize managers
-auth_manager = AuthManager()
+# Initialize database manager
 db_manager = MongoDBManager()
 
-def get_user_collection_name():
+def get_user_collection_name(user_id):
     """Get user-specific Qdrant collection name"""
-    return auth_manager.get_user_collection_name()
+    return f"docubot_user_{user_id}" if user_id else "docubot_default"
 
-def get_qdrant_vector_store(collection_name=None):
+def get_qdrant_vector_store(user_id, collection_name=None):
     """Get Qdrant vector store for current user"""
     if collection_name is None:
-        collection_name = get_user_collection_name()
+        collection_name = get_user_collection_name(user_id)
     
     qdrant_config = get_qdrant_config()
     if not qdrant_config['api_key'] or not qdrant_config['url']:
@@ -62,9 +60,8 @@ def get_embedding_model():
         encode_kwargs={'normalize_embeddings': True}
     )
 
-def clear_all_data():
-    """Clear user's Qdrant collection and MongoDB records"""
-    user_id = auth_manager.get_user_id()
+def clear_all_data(user_id):
+    """Clear user's Qdrant collection"""
     if not user_id:
         return "No user logged in"
     
@@ -75,33 +72,29 @@ def clear_all_data():
             url=qdrant_config['url'],
             api_key=qdrant_config['api_key']
         )
-        collection_name = get_user_collection_name()
+        collection_name = get_user_collection_name(user_id)
         client.delete_collection(collection_name=collection_name)
-        
-        # Note: We don't delete MongoDB records for audit purposes
-        # You can add soft delete if needed
         
         return "🧹 Cleared all vector data!"
     except Exception as e:
         return f"Error clearing data: {str(e)}"
 
-def build_vector_store_from_pdfs(uploaded_files, append=False):
+def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
     """Build vector store from PDF documents"""
-    user_id = auth_manager.get_user_id()
     if not user_id:
         raise ValueError("User not authenticated")
     
     try:
         # Get or create vector store
         if append:
-            db = get_qdrant_vector_store()
+            db = get_qdrant_vector_store(user_id)
         else:
             # For replace mode, clear existing collection
-            clear_all_data()
-            db = get_qdrant_vector_store()
+            clear_all_data(user_id)
+            db = get_qdrant_vector_store(user_id)
         
         # Process PDFs and get chunks
-        chunks, processed_files = get_document_chunks()
+        chunks, processed_files = get_document_chunks(user_id)
         
         if not chunks:
             return None, "no_documents"
@@ -124,20 +117,19 @@ def build_vector_store_from_pdfs(uploaded_files, append=False):
         print(f"Error building vector store: {e}")
         return None, "failed"
 
-def build_vector_store_from_urls(urls, append=False):
+def build_vector_store_from_urls(user_id, urls, append=False):
     """Build vector store from webpage URLs"""
-    user_id = auth_manager.get_user_id()
     if not user_id:
         raise ValueError("User not authenticated")
     
     try:
         # Get or create vector store
         if append:
-            db = get_qdrant_vector_store()
+            db = get_qdrant_vector_store(user_id)
         else:
             # For replace mode, clear existing collection
-            clear_all_data()
-            db = get_qdrant_vector_store()
+            clear_all_data(user_id)
+            db = get_qdrant_vector_store(user_id)
         
         # Scrape URLs and get chunks
         chunks = scrape_urls_to_chunks(urls)
@@ -163,11 +155,11 @@ def build_vector_store_from_urls(urls, append=False):
         print(f"Error building vector store from URLs: {e}")
         return None, "failed"
 
-def get_vector_store():
+def get_vector_store(user_id):
     """Get vector store for current user"""
-    return get_qdrant_vector_store()
+    return get_qdrant_vector_store(user_id)
 
-def vector_store_exists():
+def vector_store_exists(user_id):
     """Check if vector store exists for current user"""
     try:
         qdrant_config = get_qdrant_config()
@@ -175,7 +167,7 @@ def vector_store_exists():
             url=qdrant_config['url'],
             api_key=qdrant_config['api_key']
         )
-        collection_name = get_user_collection_name()
+        collection_name = get_user_collection_name(user_id)
         collection_info = client.get_collection(collection_name=collection_name)
         return collection_info.points_count > 0
     except:

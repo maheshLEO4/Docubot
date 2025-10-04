@@ -3,22 +3,16 @@ import shutil
 import streamlit as st
 from data_processing import get_existing_pdf_files, save_uploaded_files
 from vector_store import (
-    clear_all_data, build_vector_store, build_vector_store_from_urls,
-    get_vector_store, vector_store_exists, get_user_data_path, get_vector_store_type
+    clear_all_data, build_vector_store_from_pdfs, build_vector_store_from_urls,
+    get_vector_store, vector_store_exists
 )
 from query_processor import process_query
-from config import validate_api_key, validate_qdrant_config
-from auth import setup_authentication, AuthManager
+from config import validate_api_key
+from auth import setup_authentication
+from database import MongoDBManager
 
 # --- Configuration ---
 st.set_page_config(page_title="DocuBot AI 🤖", page_icon="🤖", layout="wide")
-
-# Initialize authentication
-if 'auth_manager' not in st.session_state:
-    st.session_state.auth_manager = AuthManager()
-
-# Setup authentication UI
-setup_authentication()
 
 # Get API key (this will show error if not found)
 try:
@@ -27,15 +21,22 @@ except ValueError as e:
     st.error(str(e))
     st.stop()
 
-# Check Qdrant configuration
-qdrant_config = validate_qdrant_config()
-vector_store_type = get_vector_store_type()
+# Setup authentication and get user_id
+user_id = setup_authentication()
+
+# Initialize database
+db_manager = MongoDBManager()
+
+# Initialize user in database
+if user_id and st.session_state.user:
+    db_manager.init_user(st.session_state.user)
+    db_manager.update_last_login(user_id)
 
 # Initialize session state
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'is_processed' not in st.session_state:
-    st.session_state.is_processed = vector_store_exists()
+    st.session_state.is_processed = vector_store_exists(user_id)
 if 'db_loaded' not in st.session_state:
     st.session_state.db_loaded = False
 
@@ -44,11 +45,8 @@ with st.sidebar:
     st.title("📄 DocuBot Controls")
     st.markdown("Upload PDFs or add websites to build your knowledge base.")
     
-    # Show storage type
-    if vector_store_type == "qdrant":
-        st.success("🔗 Using Qdrant Cloud Storage")
-    else:
-        st.info("💾 Using Local FAISS Storage")
+    # Show storage info
+    st.success("🔗 Using Qdrant Cloud Storage")
     
     # Tab for different input methods
     input_tab1, input_tab2 = st.tabs(["📁 Upload PDFs", "🌐 Add Websites"])
@@ -74,11 +72,11 @@ with st.sidebar:
     st.subheader("⚙️ Processing Options")
     
     # Check if vector store already exists
-    vector_store_exists_flag = vector_store_exists()
+    vector_store_exists_flag = vector_store_exists(user_id)
     
     if vector_store_exists_flag:
         st.success("✅ Knowledge base exists")
-        existing_files = get_existing_pdf_files()
+        existing_files = get_existing_pdf_files(user_id)
         st.write(f"**Current documents:** {len(existing_files)}")
         
         processing_mode = st.radio(
@@ -108,7 +106,7 @@ with st.sidebar:
 
     with col2:
         if st.button("Clear All", use_container_width=True, type="secondary"):
-            result = clear_all_data()
+            result = clear_all_data(user_id)
             st.session_state.is_processed = False
             st.session_state.db_loaded = False
             st.session_state.messages = []
@@ -119,26 +117,22 @@ with st.sidebar:
     if process_pdfs and uploaded_files:
         with st.spinner("Processing PDF documents..."):
             try:
-                new_files = save_uploaded_files(uploaded_files)
+                new_files = save_uploaded_files(uploaded_files, user_id)
                 
-                if processing_mode == "Replace All Content":
-                    # For Qdrant, we don't need to delete local paths
-                    if vector_store_type == "faiss":
-                        user_db_path = st.session_state.auth_manager.get_user_vectorstore_path()
-                        if os.path.exists(user_db_path):
-                            shutil.rmtree(user_db_path)
-                    db, action = build_vector_store(append=False)
-                else:
-                    db, action = build_vector_store(append=True)
+                db, action = build_vector_store_from_pdfs(
+                    user_id, 
+                    uploaded_files, 
+                    append=(processing_mode == "Add New Content")
+                )
                 
-                if db is not None and action != "no_new_files":
+                if db is not None and action != "no_documents":
                     st.session_state.is_processed = True
                     st.session_state.db_loaded = True
                     st.success(f"✅ PDF documents {action} successfully!")
                     if new_files:
                         st.toast(f"Added {len(new_files)} new documents", icon="📄")
-                elif action == "no_new_files":
-                    st.info("ℹ️ No new PDF documents to process.")
+                elif action == "no_documents":
+                    st.info("ℹ️ No PDF documents to process.")
                 else:
                     st.error("❌ Failed to process PDF documents.")
             except Exception as e:
@@ -148,30 +142,17 @@ with st.sidebar:
     if process_websites and urls_list:
         with st.spinner(f"Scraping {len(urls_list)} website(s)..."):
             try:
-                # Show scraping progress
-                status_container = st.empty()
-                
-                if processing_mode == "Replace All Content":
-                    # For Qdrant, we don't need to delete local paths
-                    if vector_store_type == "faiss":
-                        user_db_path = st.session_state.auth_manager.get_user_vectorstore_path()
-                        if os.path.exists(user_db_path):
-                            shutil.rmtree(user_db_path)
-                    db, action = build_vector_store_from_urls(urls_list, append=False)
-                else:
-                    db, action = build_vector_store_from_urls(urls_list, append=True)
-                
-                # Clear scraping status
-                if 'scraping_status' in st.session_state:
-                    del st.session_state.scraping_status
+                db, action = build_vector_store_from_urls(
+                    user_id,
+                    urls_list, 
+                    append=(processing_mode == "Add New Content")
+                )
                 
                 if db is not None and action not in ["no_new_urls", "failed"]:
                     st.session_state.is_processed = True
                     st.session_state.db_loaded = True
                     st.success(f"✅ Websites {action} successfully!")
                     st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
-                elif action == "no_new_urls":
-                    st.info("ℹ️ No new URLs to process. All URLs are already in the knowledge base.")
                 elif action == "failed":
                     st.error("❌ Failed to scrape websites.")
                     st.warning("""
@@ -193,40 +174,14 @@ with st.sidebar:
     
     # Display document info
     if st.session_state.get('is_processed', False):
-        data_path = get_user_data_path()
-        if os.path.exists(data_path):
-            st.markdown("---")
-            st.subheader("📊 Knowledge Base Info")
-            
-            # Show PDF files
-            pdf_files = get_existing_pdf_files()
-            if pdf_files:
-                st.write(f"**Total PDF documents:** {len(pdf_files)}")
-                for pdf in pdf_files[-5:]:
-                    file_path = os.path.join(data_path, pdf)
-                    if os.path.exists(file_path):
-                        file_size = os.path.getsize(file_path) / (1024 * 1024)
-                        st.caption(f"• {pdf} ({file_size:.1f} MB)")
-                    else:
-                        st.caption(f"• {pdf} (file not found)")
-                if len(pdf_files) > 5:
-                    st.caption(f"... and {len(pdf_files) - 5} more documents")
-            else:
-                st.write("**PDF documents:** 0")
-            
-            # Show scraped URLs
-            processed_urls_path = os.path.join(data_path, "processed_urls.txt")
-            if os.path.exists(processed_urls_path):
-                with open(processed_urls_path, 'r') as f:
-                    urls = [line.strip() for line in f if line.strip()]
-                if urls:
-                    st.write(f"**Total scraped URLs:** {len(urls)}")
-                    for url in urls[-5:]:
-                        st.caption(f"• {url}")
-                    if len(urls) > 5:
-                        st.caption(f"... and {len(urls) - 5} more URLs")
-            else:
-                st.write("**Scraped URLs:** 0")
+        st.markdown("---")
+        st.subheader("📊 Knowledge Base Info")
+        
+        # Show user stats from MongoDB
+        stats = db_manager.get_user_stats(user_id)
+        st.write(f"**Files Uploaded:** {stats['files_uploaded']}")
+        st.write(f"**Websites Scraped:** {stats['websites_scraped']}")
+        st.write(f"**Queries Made:** {stats['queries_made']}")
 
 # --- Main Chat ---
 st.title("🤖 DocuBot AI: Chat with Your Documents & Websites")
@@ -235,14 +190,8 @@ st.markdown("Ask questions about your uploaded PDFs and scraped websites.")
 # Display welcome message
 if not st.session_state.messages:
     if st.session_state.is_processed:
-        doc_count = len(get_existing_pdf_files())
         st.success(f"✅ Ready! Your knowledge base is loaded and ready for questions.")
-        
-        # Show storage info
-        if vector_store_type == "qdrant":
-            st.info("💡 Using Qdrant Cloud for fast, scalable vector search")
-        else:
-            st.info("💡 Using local FAISS storage")
+        st.info("💡 Using Qdrant Cloud for fast, scalable vector search")
     else:
         st.info("📚 Upload PDFs or add websites in the sidebar to build your knowledge base.")
 
@@ -261,8 +210,12 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
     else:
         try:
             with st.spinner("Thinking..."):
+                import time
+                start_time = time.time()
+                
                 # Use the query processor with the API key
                 result = process_query(prompt, api_key)
+                processing_time = time.time() - start_time
                 
                 if result['success']:
                     enhanced_result = result['answer']
@@ -295,6 +248,15 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                     st.markdown("---")
 
                     st.session_state.messages.append({'role': 'assistant', 'content': enhanced_result})
+                    
+                    # Log query in MongoDB
+                    db_manager.log_query(
+                        user_id=user_id,
+                        query=prompt,
+                        response=enhanced_result,
+                        sources_used=source_documents,
+                        processing_time=processing_time
+                    )
                 else:
                     error_msg = result['error']
                     st.error(error_msg)
