@@ -61,9 +61,17 @@ def get_google_oauth_config():
     """
     Get Google OAuth configuration
     """
-    # For Streamlit Cloud, the redirect URI is the app URL
-    app_url = os.environ.get('STREAMLIT_APP_URL', 'http://localhost:8501')
-    redirect_uri = f"{app_url}"
+    # For Streamlit Cloud, we need to use the exact app URL as redirect_uri
+    # Streamlit Cloud apps always have the format: https://appname-username.streamlit.app/
+    app_name = os.environ.get('STREAMLIT_APP_NAME', '')
+    user_name = os.environ.get('STREAMLIT_USER_NAME', '')
+    
+    if app_name and user_name:
+        # Production - Streamlit Cloud
+        redirect_uri = f"https://{app_name}-{user_name}.streamlit.app/"
+    else:
+        # Local development
+        redirect_uri = "http://localhost:8501/"
     
     return {
         'client_id': get_api_key('GOOGLE_OAUTH_CLIENT_ID'),

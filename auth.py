@@ -2,27 +2,31 @@ import streamlit as st
 import hashlib
 import os
 import requests
+import urllib.parse
 from config import get_google_oauth_config
+from database import MongoDBManager
 
 class AuthManager:
     def __init__(self):
         self.oauth_config = get_google_oauth_config()
+        self.db = MongoDBManager()
     
     def get_google_oauth_url(self):
         """Generate Google OAuth URL"""
         client_id = self.oauth_config['client_id']
         redirect_uri = self.oauth_config['redirect_uri']
         
-        # Google OAuth endpoint
-        auth_url = (
-            f"https://accounts.google.com/o/oauth2/v2/auth?"
-            f"client_id={client_id}&"
-            f"redirect_uri={redirect_uri}&"
-            f"response_type=code&"
-            f"scope=openid%20email%20profile&"
-            f"access_type=offline&"
-            f"prompt=consent"
-        )
+        # Google OAuth endpoint with proper encoding
+        params = {
+            'client_id': client_id,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': 'openid email profile',
+            'access_type': 'offline',
+            'prompt': 'consent'
+        }
+        
+        auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
         return auth_url
     
     def exchange_code_for_token(self, code):
@@ -42,7 +46,7 @@ class AuthManager:
                 token_data = response.json()
                 return token_data.get('access_token')
             else:
-                print(f"Token exchange failed: {response.text}")
+                print(f"Token exchange failed: {response.status_code} - {response.text}")
                 return None
         except Exception as e:
             print(f"Error exchanging code: {e}")
@@ -68,9 +72,13 @@ class AuthManager:
                     'google_id': user_data['sub']
                 }
                 
+                # Initialize user in database
+                self.db.init_user(user_record)
+                self.db.update_last_login(user_id)
+                
                 return user_record
             else:
-                print(f"Failed to get user info: {response.text}")
+                print(f"Failed to get user info: {response.status_code} - {response.text}")
                 return None
         except Exception as e:
             print(f"Error getting user info: {e}")
@@ -85,11 +93,17 @@ def setup_authentication():
     if 'auth_manager' not in st.session_state:
         st.session_state.auth_manager = AuthManager()
     
+    # Display current redirect URI for debugging
+    oauth_config = get_google_oauth_config()
+    st.sidebar.caption(f"Redirect URI: {oauth_config['redirect_uri']}")
+    
     # Check for OAuth callback
     query_params = st.query_params
     if 'code' in query_params and not st.session_state.user:
         # We have an OAuth callback
         code = query_params['code']
+        st.sidebar.info("Processing OAuth callback...")
+        
         access_token = st.session_state.auth_manager.exchange_code_for_token(code)
         
         if access_token:
@@ -99,6 +113,10 @@ def setup_authentication():
                 # Clear the code from URL
                 st.query_params.clear()
                 st.rerun()
+            else:
+                st.sidebar.error("Failed to get user info from Google")
+        else:
+            st.sidebar.error("Failed to exchange authorization code")
     
     if not st.session_state.user:
         st.sidebar.info("Please sign in with Google to continue")
@@ -108,22 +126,32 @@ def setup_authentication():
         
         st.sidebar.markdown(
             f"""
-            <a href="{oauth_url}" style="
+            <a href="{oauth_url}" target="_self" style="
                 display: inline-block;
                 background: #4285F4;
                 color: white;
-                padding: 10px 20px;
+                padding: 12px 24px;
                 text-decoration: none;
                 border-radius: 4px;
                 font-weight: bold;
                 text-align: center;
                 width: 100%;
+                border: none;
+                cursor: pointer;
             ">
-            Sign in with Google
+            🔐 Sign in with Google
             </a>
             """,
             unsafe_allow_html=True
         )
+        
+        st.sidebar.markdown("---")
+        st.sidebar.caption("Troubleshooting OAuth?")
+        st.sidebar.markdown("""
+        1. Go to [Google Cloud Console](https://console.cloud.google.com)
+        2. Add this exact URL to **Authorized redirect URIs**:
+        """)
+        st.sidebar.code(oauth_config['redirect_uri'])
         
         st.sidebar.markdown("---")
         st.sidebar.caption("Demo Mode (for testing)")
@@ -140,6 +168,7 @@ def setup_authentication():
                     'picture': '',
                     'google_id': 'demo'
                 }
+                st.session_state.auth_manager.db.init_user(user_data)
                 st.session_state.user = user_data
                 st.rerun()
         
@@ -149,6 +178,14 @@ def setup_authentication():
         user_data = st.session_state.user
         st.sidebar.success(f"👋 Welcome, {user_data['name']}!")
         st.sidebar.caption(f"Signed in as: {user_data['email']}")
+        
+        # Show user stats
+        try:
+            stats = st.session_state.auth_manager.db.get_user_stats(user_data['user_id'])
+            st.sidebar.metric("Files Uploaded", stats['files_uploaded'])
+            st.sidebar.metric("Queries Made", stats['queries_made'])
+        except:
+            pass
         
         if st.sidebar.button("Sign Out", use_container_width=True):
             # Clear session state
