@@ -214,7 +214,7 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                 start_time = time.time()
                 
                 # Use the query processor with the API key
-                result = process_query(prompt, api_key)
+                result = process_query(prompt, api_key, user_id) 
                 processing_time = time.time() - start_time
                 
                 if result['success']:

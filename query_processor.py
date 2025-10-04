@@ -26,9 +26,9 @@ def enhance_answer(original_answer, question, context_docs):
     
     return original_answer
 
-def get_qa_chain(groq_api_key):
+def get_qa_chain(groq_api_key, user_id):
     """Creates and returns the RetrievalQA chain."""
-    db = get_vector_store()
+    db = get_vector_store(user_id)  # Pass user_id here
     if db is None:
         return None
 
@@ -123,10 +123,10 @@ def format_source_documents(source_documents):
     
     return formatted_sources
 
-def process_query(prompt, groq_api_key):
+def process_query(prompt, groq_api_key, user_id):
     """Process a user query and return the response with source documents."""
     try:
-        qa_chain = get_qa_chain(groq_api_key)
+        qa_chain = get_qa_chain(groq_api_key, user_id)  # Pass user_id here
         if qa_chain:
             response = qa_chain.invoke({'query': prompt})
             result = response["result"]
