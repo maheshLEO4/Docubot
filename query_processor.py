@@ -14,14 +14,16 @@ def get_cached_qa_chain(groq_api_key, user_id):
             return None
 
         # Simple, effective prompt (like MediBot)
-        CUSTOM_PROMPT_TEMPLATE = """You are a helpful assistant for DocuBot. Answer the question naturally and conversationally using the context provided from the user's documents and websites.
+        CUSTOM_PROMPT_TEMPLATE = """
+                Use the pieces of information provided in the context to answer user's question.
+                If you dont know the answer, just say that you dont know, dont try to make up an answer. 
+                Dont provide anything out of the given context
 
-Context from your knowledge base:
-{context}
+                Context: {context}
+                Question: {question}
 
-Question: {question}
-
-Provide a clear, helpful answer:"""
+                Start the answer directly. No small talk please.
+                """
         
         prompt = PromptTemplate(
             template=CUSTOM_PROMPT_TEMPLATE, 
