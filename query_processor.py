@@ -13,16 +13,23 @@ def get_cached_qa_chain(groq_api_key, user_id):
         if db is None:
             return None
 
-        # More efficient prompt - shorter for faster processing
-        CUSTOM_PROMPT_TEMPLATE = """ you are a  personel AI  chat bot Answer the question using only the context below.
+        # Improved prompt for document-specific responses
+        CUSTOM_PROMPT_TEMPLATE = """You are a helpful AI assistant for DocuBot. Your role is to answer questions based ONLY on the provided context from the user's uploaded documents and websites.
 
-Context: {context}
+IMPORTANT INSTRUCTIONS:
+- Answer questions using ONLY the information from the context below
+- If the context doesn't contain relevant information, say "I couldn't find specific information about this in your knowledge base."
+- Be precise and factual - don't make up information
+- Focus on the most relevant parts of the context
+- If the context has multiple perspectives, mention this
+- Keep answers clear and concise but informative
 
-Question: {question}
+CONTEXT FROM USER'S DOCUMENTS:
+{context}
 
-Answer clearly and concisely. If unsure, say so.
+USER'S QUESTION: {question}
 
-Answer:"""
+BASED ON THE ABOVE CONTEXT, PROVIDE A HELPFUL ANSWER:"""
         
         prompt = PromptTemplate(
             template=CUSTOM_PROMPT_TEMPLATE, 
@@ -33,8 +40,8 @@ Answer:"""
         retriever = db.as_retriever(
             search_type="similarity",
             search_kwargs={
-                'k': 2,  # Only 2 documents for speed
-                'score_threshold': 0.7  # Better relevance filtering
+                'k': 3,  # Increased to 3 for better coverage
+                'score_threshold': 0.6  # Slightly lower threshold to catch more relevant docs
             }
         )
         
@@ -42,14 +49,14 @@ Answer:"""
         llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
             temperature=0.1,
-            max_tokens=150,  # Smaller responses
-            timeout=10,  # Faster timeout
+            max_tokens=300,  # Increased for more detailed answers
+            timeout=15,  # Slightly longer timeout
             groq_api_key=groq_api_key,
         )
         
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
-            chain_type="stuff",  # Fastest chain type
+            chain_type="stuff",
             retriever=retriever,
             return_source_documents=True,
             chain_type_kwargs={'prompt': prompt}
@@ -84,7 +91,7 @@ def format_source_documents(source_documents):
                 page_num += 1
             
             # Fast excerpt truncation
-            excerpt = doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content
+            excerpt = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
             
             formatted_sources.append({
                 'document': source_name,

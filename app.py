@@ -243,11 +243,19 @@ for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message['role']):
         st.markdown(message['content'])
         
+        # Debug information (remove after testing)
+        st.caption(f"Message index: {idx}, Total messages: {len(st.session_state.messages)}")
+        st.caption(f"Is assistant: {message['role'] == 'assistant'}")
+        st.caption(f"Has source docs: {idx in st.session_state.source_docs}")
+        if idx in st.session_state.source_docs:
+            st.caption(f"Source docs exist: {bool(st.session_state.source_docs[idx])}")
+        st.caption(f"Is last message: {idx == len(st.session_state.messages) - 1}")
+        
         # Show resources ONLY for the last assistant message
         if (message['role'] == 'assistant' and 
             idx in st.session_state.source_docs and
             st.session_state.source_docs[idx] and
-            idx == len(st.session_state.messages) - 1):  # Only show for last message
+            idx == len(st.session_state.messages) - 1):
             
             source_documents = st.session_state.source_docs[idx]
             if source_documents:
