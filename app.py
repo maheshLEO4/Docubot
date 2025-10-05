@@ -11,24 +11,7 @@ from auth import setup_authentication
 from database import MongoDBManager
 
 # --- Configuration ---
-st.set_page_config(
-    page_title="DocuBot AI - Chat",
-    page_icon="🤖", 
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Check URL parameters for page navigation
-query_params = st.query_params
-if "page" in query_params and query_params["page"] == "auth":
-    st.switch_page("auth.py")
-
-# Setup authentication
-user_id = setup_authentication()
-
-# If setup_authentication returns None, it means user is not authenticated
-if user_id is None:
-    st.stop()
+st.set_page_config(page_title="DocuBot AI", page_icon="🤖", layout="wide")
 
 # Get API key
 try:
@@ -36,6 +19,9 @@ try:
 except ValueError as e:
     st.error(str(e))
     st.stop()
+
+# Setup authentication
+user_id = setup_authentication()
 
 # Initialize database
 db_manager = MongoDBManager()
@@ -65,20 +51,10 @@ if user_id and not st.session_state.user_data_loaded:
         except Exception as e:
             st.error(f"Error loading knowledge base: {str(e)}")
 
-# --- Sidebar ---
+# --- Sidebar (MediBot Style) ---
 with st.sidebar:
     st.title("DocuBot Controls")
-    
-    # User info
-    user_data = st.session_state.user
-    st.success(f"Welcome, {user_data['name']}!")
-    st.caption(f"{user_data['email']}")
-    
-    # Navigation
-    st.markdown("---")
-    if st.button("🚪 Switch to Login Page", use_container_width=True):
-        st.query_params["page"] = "auth"
-        st.rerun()
+    st.markdown("AI-powered assistant for your documents and websites.")
     
     st.markdown("---")
     st.success("Using Qdrant Cloud Storage")
@@ -250,7 +226,7 @@ with st.sidebar:
             st.write(f"**Files:** {len(st.session_state.cached_user_files)}")
             st.write(f"**Websites:** {len(st.session_state.cached_user_scrapes)}")
 
-# --- Main Chat ---
+# --- Main Chat (MediBot Style) ---
 st.title("DocuBot AI: Chat with Your Documents & Websites")
 st.markdown("Ask questions about your uploaded PDFs and scraped websites.")
 
