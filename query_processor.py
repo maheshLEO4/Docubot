@@ -13,43 +13,30 @@ def get_cached_qa_chain(groq_api_key, user_id):
         if db is None:
             return None
 
-        # Improved prompt for better responses
-        CUSTOM_PROMPT_TEMPLATE = """You are DocuBot AI, a helpful assistant that answers questions based on the user's uploaded documents and websites.
+        # Simple, effective prompt (like MediBot)
+        CUSTOM_PROMPT_TEMPLATE = """You are a helpful assistant for DocuBot. Answer the question naturally and conversationally using the context provided from the user's documents and websites.
 
-IMPORTANT INSTRUCTIONS:
-- Answer questions using ONLY the information provided in the CONTEXT below
-- If the context contains relevant information, provide a clear and helpful answer
-- If the context doesn't contain enough information to answer the question, say: "I don't have enough information in your knowledge base to answer this question accurately."
-- Always be specific and cite what you found in the documents
-- Never make up information that isn't in the context
-
-CONTEXT FROM YOUR KNOWLEDGE BASE:
+Context from your knowledge base:
 {context}
 
-USER QUESTION: {question}
+Question: {question}
 
-YOUR ANSWER (based only on the context above):"""
+Provide a clear, helpful answer:"""
         
         prompt = PromptTemplate(
             template=CUSTOM_PROMPT_TEMPLATE, 
             input_variables=["context", "question"]
         )
 
-        # FIXED: More lenient retriever settings
+        # Simple retriever (like MediBot - just k, no threshold)
         retriever = db.as_retriever(
-            search_type="similarity",
-            search_kwargs={
-                'k': 5,  # Retrieve more documents for better coverage
-                # Removed score_threshold - let the LLM decide relevance
-            }
+            search_kwargs={"k": 5}  # Get top 5 relevant documents
         )
         
-        # Optimized LLM configuration
+        # LLM config (matching MediBot's working setup)
         llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
-            temperature=0.2,  # Slightly higher for more natural responses
-            max_tokens=400,  # More room for detailed answers
-            timeout=20,
+            temperature=0.1,
             groq_api_key=groq_api_key,
         )
         
@@ -67,9 +54,8 @@ YOUR ANSWER (based only on the context above):"""
         return None
 
 def format_source_documents(source_documents):
-    """Fast source document formatting."""
+    """Format source documents for display."""
     formatted_sources = []
-    seen_sources = set()  # Prevent duplicates
     
     for doc in source_documents:
         try:
@@ -84,22 +70,13 @@ def format_source_documents(source_documents):
                 source_type = 'pdf'
                 source_name = os.path.basename(str(source)) if source else 'Unknown'
             
-            # Create unique identifier
+            # Get page number
             page_num = metadata.get('page', 'N/A')
             if isinstance(page_num, int):
-                page_num += 1
+                page_num += 1  # Make it 1-indexed for display
             
-            source_id = f"{source_name}_{page_num}"
-            
-            # Skip duplicates
-            if source_id in seen_sources:
-                continue
-            seen_sources.add(source_id)
-            
-            # Excerpt with better truncation
-            excerpt = doc.page_content.strip()
-            if len(excerpt) > 250:
-                excerpt = excerpt[:247] + "..."
+            # Create excerpt
+            excerpt = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
             
             formatted_sources.append({
                 'document': source_name,
@@ -115,7 +92,7 @@ def format_source_documents(source_documents):
     return formatted_sources
 
 def process_query(prompt, groq_api_key, user_id):
-    """Fast query processing with error handling."""
+    """Process user query and return answer with sources."""
     try:
         # Get cached chain
         qa_chain = get_cached_qa_chain(groq_api_key, user_id)
@@ -126,9 +103,9 @@ def process_query(prompt, groq_api_key, user_id):
                 'error': "Knowledge base not ready. Please add documents first."
             }
         
-        # Process query
+        # Process query (exactly like MediBot)
         response = qa_chain.invoke({'query': prompt})
-        result = response.get("result", "No answer generated.")
+        answer = response.get("result", "No answer generated.")
         source_documents = response.get("source_documents", [])
         
         # Format sources
@@ -136,12 +113,12 @@ def process_query(prompt, groq_api_key, user_id):
         
         return {
             'success': True,
-            'answer': result,
+            'answer': answer,
             'sources': formatted_sources
         }
             
     except Exception as e:
-        # Specific error handling
+        # Error handling
         error_msg = "Sorry, I encountered an issue processing your question. Please try again."
         
         if "timeout" in str(e).lower():
