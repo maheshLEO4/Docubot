@@ -14,25 +14,15 @@ def get_cached_qa_chain(groq_api_key, user_id):
             return None
 
         # More efficient prompt - shorter for faster processing
-        CUSTOM_PROMPT_TEMPLATE = """
-        You are a helpful and knowledgeable personal AI assistant.
-        Answer the question strictly using only the information provided in the context below.
+        CUSTOM_PROMPT_TEMPLATE = """ you are a  personel AI  chat bot Answer the question using only the context below.
 
-        Context:
-        {context}
+Context: {context}
 
-        Question:
-        {question}
+Question: {question}
 
-        Instructions:
-        - Provide a clear, concise, and factual answer.
-        - Do NOT include phrases like "based on the context" or "according to the text".
-        - If the answer cannot be found in the context, say exactly: "I don't know."
-        - If unsure, say: "I'm not sure."
+Answer clearly and concisely. If unsure, say so   if you dont have any info say  i dont know  and dont use words like based  on the conext .
 
-        Answer:
-        """
-
+Answer:"""
         
         prompt = PromptTemplate(
             template=CUSTOM_PROMPT_TEMPLATE, 
