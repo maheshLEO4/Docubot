@@ -7,6 +7,7 @@ from vector_store import (
 )
 from query_processor import process_query
 from config import validate_api_key
+from auth import setup_authentication
 from database import MongoDBManager
 
 # --- Configuration ---
@@ -17,11 +18,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Check if user is authenticated
-if 'user' not in st.session_state:
-    st.warning("🔐 Please login first to access DocuBot AI")
-    if st.button("Go to Login Page"):
-        st.switch_page("auth_app.py")
+# Check URL parameters for page navigation
+query_params = st.query_params
+if "page" in query_params and query_params["page"] == "auth":
+    st.switch_page("auth.py")
+
+# Setup authentication
+user_id = setup_authentication()
+
+# If setup_authentication returns None, it means user is not authenticated
+if user_id is None:
     st.stop()
 
 # Get API key
@@ -31,8 +37,7 @@ except ValueError as e:
     st.error(str(e))
     st.stop()
 
-# Get user data
-user_id = st.session_state.user['user_id']
+# Initialize database
 db_manager = MongoDBManager()
 
 # Initialize session state with caching
@@ -72,7 +77,8 @@ with st.sidebar:
     # Navigation
     st.markdown("---")
     if st.button("🚪 Switch to Login Page", use_container_width=True):
-        st.switch_page("auth_app.py")
+        st.query_params["page"] = "auth"
+        st.rerun()
     
     st.markdown("---")
     st.success("Using Qdrant Cloud Storage")
