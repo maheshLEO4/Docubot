@@ -1,18 +1,19 @@
 import os
-import time
+import streamlit as st
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 from vector_store import get_vector_store
 
-def get_qa_chain(groq_api_key, user_id):
-    """Creates and returns the RetrievalQA chain."""
+@st.cache_resource
+def get_cached_qa_chain(groq_api_key, user_id):
+    """Cached QA chain - only loads once per user session"""
     db = get_vector_store(user_id)
     if db is None:
         return None
 
-    # Simplified, faster prompt
-    CUSTOM_PROMPT_TEMPLATE = """Answer the question using only the provided context. Be concise and direct.
+    # Simplified prompt
+    CUSTOM_PROMPT_TEMPLATE = """Answer the question using the context provided. Be concise.
 
 Context: {context}
 
@@ -26,21 +27,17 @@ Answer:"""
     )
 
     try:
-        # Optimized retriever - reduced to 2 documents
+        # Optimized retriever
         retriever = db.as_retriever(
             search_type="similarity",
-            search_kwargs={'k': 2}  # Reduced from 3
+            search_kwargs={'k': 2}
         )
-    except Exception as e:
-        print(f"Error creating retriever: {e}")
-        return None
-
-    try:
+        
         qa_chain = RetrievalQA.from_chain_type(
             llm=ChatGroq(
                 model_name="llama-3.1-8b-instant",
                 temperature=0.1,
-                max_tokens=256,  # Reduced from 512 for speed
+                max_tokens=200,  # Even smaller for speed
                 groq_api_key=groq_api_key,
             ),
             chain_type="stuff",
@@ -92,18 +89,19 @@ def format_source_documents(source_documents):
 def process_query(prompt, groq_api_key, user_id):
     """Process a user query and return the response with source documents."""
     try:
-        qa_chain = get_qa_chain(groq_api_key, user_id)
+        # Use cached QA chain
+        qa_chain = get_cached_qa_chain(groq_api_key, user_id)
+        
         if qa_chain:
             response = qa_chain.invoke({'query': prompt})
             result = response["result"]
             source_documents = response["source_documents"]
             
-            # Format source documents for display
             formatted_sources = format_source_documents(source_documents)
             
             return {
                 'success': True,
-                'answer': result,  # Direct answer, no enhancement
+                'answer': result,
                 'sources': formatted_sources
             }
         else:
@@ -113,7 +111,7 @@ def process_query(prompt, groq_api_key, user_id):
             }
             
     except Exception as e:
-        error_msg = f"An error occurred while processing your question: {str(e)}"
+        error_msg = f"An error occurred: {str(e)}"
         print(f"Query processing error: {e}")
         return {
             'success': False,

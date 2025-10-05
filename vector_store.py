@@ -1,4 +1,5 @@
 import os
+import streamlit as st
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Qdrant
 from qdrant_client import QdrantClient
@@ -11,9 +12,28 @@ from database import MongoDBManager
 # Initialize database manager
 db_manager = MongoDBManager()
 
+@st.cache_resource
+def get_embedding_model():
+    """Cached embedding model - loads only once"""
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
+
 def get_user_collection_name(user_id):
     """Get user-specific Qdrant collection name"""
     return f"docubot_user_{user_id}" if user_id else "docubot_default"
+
+@st.cache_resource
+def get_qdrant_client():
+    """Cached Qdrant client"""
+    qdrant_config = get_qdrant_config()
+    return QdrantClient(
+        url=qdrant_config['url'],
+        api_key=qdrant_config['api_key'],
+        timeout=30
+    )
 
 def get_qdrant_vector_store(user_id, collection_name=None):
     """Get Qdrant vector store for current user"""
@@ -25,11 +45,7 @@ def get_qdrant_vector_store(user_id, collection_name=None):
         raise ValueError("Qdrant Cloud not configured")
     
     try:
-        client = QdrantClient(
-            url=qdrant_config['url'],
-            api_key=qdrant_config['api_key']
-        )
-        
+        client = get_qdrant_client()
         embedding_model = get_embedding_model()
         
         # Create collection if it doesn't exist
@@ -52,30 +68,17 @@ def get_qdrant_vector_store(user_id, collection_name=None):
         print(f"Error initializing Qdrant: {e}")
         raise
 
-def get_embedding_model():
-    """Cached embedding model"""
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
-    )
-
 def clear_all_data(user_id):
     """Clear user's Qdrant collection"""
     if not user_id:
         return "No user logged in"
     
     try:
-        # Clear Qdrant collection
-        qdrant_config = get_qdrant_config()
-        client = QdrantClient(
-            url=qdrant_config['url'],
-            api_key=qdrant_config['api_key']
-        )
+        client = get_qdrant_client()
         collection_name = get_user_collection_name(user_id)
         client.delete_collection(collection_name=collection_name)
         
-        return "🧹 Cleared all vector data!"
+        return "Cleared all vector data!"
     except Exception as e:
         return f"Error clearing data: {str(e)}"
 
@@ -85,17 +88,11 @@ def remove_documents_from_store(user_id, source, doc_type):
         return False
     
     try:
-        qdrant_config = get_qdrant_config()
-        client = QdrantClient(
-            url=qdrant_config['url'],
-            api_key=qdrant_config['api_key']
-        )
+        client = get_qdrant_client()
         collection_name = get_user_collection_name(user_id)
         
         # Delete points with matching source in metadata
-        # For PDFs, match basename; for URLs, match full URL
         if doc_type == 'pdf':
-            # Search for documents with source containing this filename
             scroll_result = client.scroll(
                 collection_name=collection_name,
                 limit=10000
@@ -114,7 +111,6 @@ def remove_documents_from_store(user_id, source, doc_type):
                     points_selector=points_to_delete
                 )
         else:  # web
-            # For web URLs, match exact URL
             scroll_result = client.scroll(
                 collection_name=collection_name,
                 limit=10000
@@ -133,7 +129,7 @@ def remove_documents_from_store(user_id, source, doc_type):
                     points_selector=points_to_delete
                 )
         
-        print(f"✅ Removed {len(points_to_delete)} points for source: {source}")
+        print(f"Removed {len(points_to_delete)} points for source: {source}")
         return True
         
     except Exception as e:
@@ -146,24 +142,19 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
         raise ValueError("User not authenticated")
     
     try:
-        # Get or create vector store
         if append:
             db = get_qdrant_vector_store(user_id)
         else:
-            # For replace mode, clear existing collection
             clear_all_data(user_id)
             db = get_qdrant_vector_store(user_id)
         
-        # Process PDFs and get chunks
         chunks, processed_files = get_document_chunks(user_id)
         
         if not chunks:
             return None, "no_documents"
         
-        # Add documents to vector store
         db.add_documents(chunks)
         
-        # Log file uploads in MongoDB
         for filename in processed_files:
             db_manager.log_file_upload(
                 user_id=user_id,
@@ -184,24 +175,19 @@ def build_vector_store_from_urls(user_id, urls, append=False):
         raise ValueError("User not authenticated")
     
     try:
-        # Get or create vector store
         if append:
             db = get_qdrant_vector_store(user_id)
         else:
-            # For replace mode, clear existing collection
             clear_all_data(user_id)
             db = get_qdrant_vector_store(user_id)
         
-        # Scrape URLs and get chunks
         chunks = scrape_urls_to_chunks(urls)
         
         if not chunks:
             return None, "failed"
         
-        # Add documents to vector store
         db.add_documents(chunks)
         
-        # Log web scrape in MongoDB
         successful_urls = list(set([chunk.metadata.get('source') for chunk in chunks]))
         db_manager.log_web_scrape(
             user_id=user_id,
@@ -223,11 +209,7 @@ def get_vector_store(user_id):
 def vector_store_exists(user_id):
     """Check if vector store exists for current user"""
     try:
-        qdrant_config = get_qdrant_config()
-        client = QdrantClient(
-            url=qdrant_config['url'],
-            api_key=qdrant_config['api_key']
-        )
+        client = get_qdrant_client()
         collection_name = get_user_collection_name(user_id)
         collection_info = client.get_collection(collection_name=collection_name)
         return collection_info.points_count > 0
