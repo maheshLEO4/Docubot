@@ -58,39 +58,47 @@ with st.sidebar:
     # Lightweight storage info
     st.success("Using Qdrant Cloud Storage")
     
-    # Knowledge Base Section - Lazy loaded
+    # Knowledge Base Section - With dropdowns
     if st.session_state.vector_store_exists:
         st.markdown("---")
         st.subheader("Your Knowledge Base")
         
-        # Use checkboxes to control expansion
-        show_files = st.checkbox("Show Uploaded Files", True)
-        if show_files:
-            with st.container():
-                if st.session_state.cached_user_files:
-                    for file_record in st.session_state.cached_user_files[:5]:  # Limit display
+        # Uploaded Files Dropdown
+        with st.expander("📁 Uploaded Files", expanded=True):
+            if st.session_state.cached_user_files:
+                for file_record in st.session_state.cached_user_files[:5]:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.text(f"📄 {file_record['filename']}")
+                    with col2:
+                        if st.button("🗑️", key=f"del_file_{file_record['upload_id']}"):
+                            with st.spinner("Removing file..."):
+                                success = remove_documents_from_store(user_id, file_record['filename'], 'pdf')
+                                if success:
+                                    db_manager.delete_file_upload(file_record['upload_id'])
+                                    st.session_state.cached_user_files = db_manager.get_user_files(user_id)
+                                    st.success("File removed!")
+            else:
+                st.info("No files uploaded yet")
+        
+        # Scraped Websites Dropdown
+        with st.expander("🌐 Scraped Websites", expanded=True):
+            if st.session_state.cached_user_scrapes:
+                for scrape_record in st.session_state.cached_user_scrapes:
+                    for url in scrape_record.get('successful_urls', [])[:5]:
                         col1, col2 = st.columns([3, 1])
                         with col1:
-                            st.text(f"📄 {file_record['filename']}")
+                            st.text(f"🌐 {url}")
                         with col2:
-                            if st.button("🗑️", key=f"del_file_{file_record['upload_id']}"):
-                                # Handle deletion without rerun
-                                with st.spinner("Removing file..."):
-                                    success = remove_documents_from_store(user_id, file_record['filename'], 'pdf')
+                            if st.button("🗑️", key=f"del_url_{scrape_record['scrape_id']}_{hash(url)}"):
+                                with st.spinner("Removing URL..."):
+                                    success = remove_documents_from_store(user_id, url, 'web')
                                     if success:
-                                        db_manager.delete_file_upload(file_record['upload_id'])
-                                        # Update cache instead of rerun
-                                        st.session_state.cached_user_files = db_manager.get_user_files(user_id)
-                                        st.success("File removed!")
-                else:
-                    st.info("No files uploaded yet")
-        
-        show_urls = st.checkbox("Show Scraped Websites", True)
-        if show_urls:
-            with st.container():
-                if st.session_state.cached_user_scrapes:
-                    # Similar optimized URL display
-                    pass
+                                        db_manager.delete_web_scrape(scrape_record['scrape_id'])
+                                        st.session_state.cached_user_scrapes = db_manager.get_user_scrapes(user_id)
+                                        st.success("URL removed!")
+            else:
+                st.info("No websites scraped yet")
     
     # Input sections
     st.markdown("---")
@@ -172,24 +180,23 @@ for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message['role']):
         st.markdown(message['content'])
         
-        # Only show sources when requested
+        # Show sources dropdown for assistant messages
         if (message['role'] == 'assistant' and 
             idx in st.session_state.source_docs and
             st.session_state.source_docs[idx]):
             
             source_count = len(st.session_state.source_docs[idx])
-            if st.button(f"📚 Show Sources ({source_count})", key=f"show_sources_{idx}"):
-                with st.expander("Source References", expanded=True):
-                    for i, doc in enumerate(st.session_state.source_docs[idx], 1):
-                        source_icon = "🌐" if doc.get('type') == 'web' else "📄"
-                        source_name = doc['document']
-                        display_name = source_name[:47] + "..." if len(source_name) > 50 else source_name
-                        
-                        st.markdown(f"**{source_icon} Source {i}:** `{display_name}`")
-                        if doc['page'] != 'N/A':
-                            st.caption(f"**Page:** {doc['page']}")
-                        st.caption(f'**Excerpt:** "{doc["excerpt"]}"')
-                        st.markdown("---")
+            with st.expander(f"📚 Source References ({source_count})", expanded=True):
+                for i, doc in enumerate(st.session_state.source_docs[idx], 1):
+                    source_icon = "🌐" if doc.get('type') == 'web' else "📄"
+                    source_name = doc['document']
+                    display_name = source_name[:47] + "..." if len(source_name) > 50 else source_name
+                    
+                    st.markdown(f"**{source_icon} Source {i}:** `{display_name}`")
+                    if doc['page'] != 'N/A':
+                        st.caption(f"**Page:** {doc['page']}")
+                    st.caption(f'**Excerpt:** "{doc["excerpt"]}"')
+                    st.markdown("---")
 
 # Chat input with optimized processing
 if prompt := st.chat_input("Ask a question about your knowledge base..."):
@@ -221,7 +228,7 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                         query=prompt,
                         response=answer,
                         sources_used=source_documents,
-                        processing_time=0  # You can calculate this if needed
+                        processing_time=0
                     )
                 else:
                     st.error(result['error'])
