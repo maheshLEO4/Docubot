@@ -105,7 +105,6 @@ def format_source_documents(source_documents):
             continue
     
     return formatted_sources
-
 def process_query(prompt, groq_api_key, user_id):
     """Fast query processing with error handling."""
     try:
@@ -123,8 +122,13 @@ def process_query(prompt, groq_api_key, user_id):
         result = response.get("result", "No answer generated.")
         source_documents = response.get("source_documents", [])
         
+        print(f"DEBUG: Raw source documents: {source_documents}")  # Debug line
+        print(f"DEBUG: Number of source documents: {len(source_documents)}")  # Debug line
+        
         # Fast formatting
         formatted_sources = format_source_documents(source_documents)
+        
+        print(f"DEBUG: Formatted sources: {formatted_sources}")  # Debug line
         
         return {
             'success': True,

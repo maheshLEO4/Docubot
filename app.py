@@ -237,28 +237,21 @@ if not st.session_state.messages:
         st.info("Using Qdrant Cloud for fast, scalable vector search")
     else:
         st.info("Upload PDFs or add websites in the sidebar to build your knowledge base.")
-
 # Display chat messages
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message['role']):
         st.markdown(message['content'])
         
-        # Debug information (remove after testing)
-        st.caption(f"Message index: {idx}, Total messages: {len(st.session_state.messages)}")
-        st.caption(f"Is assistant: {message['role'] == 'assistant'}")
-        st.caption(f"Has source docs: {idx in st.session_state.source_docs}")
-        if idx in st.session_state.source_docs:
-            st.caption(f"Source docs exist: {bool(st.session_state.source_docs[idx])}")
-        st.caption(f"Is last message: {idx == len(st.session_state.messages) - 1}")
-        
-        # Show resources ONLY for the last assistant message
+        # Show resources for assistant messages that have sources
         if (message['role'] == 'assistant' and 
-            idx in st.session_state.source_docs and
-            st.session_state.source_docs[idx] and
-            idx == len(st.session_state.messages) - 1):
+            idx in st.session_state.source_docs):
             
             source_documents = st.session_state.source_docs[idx]
-            if source_documents:
+            
+            # Debug information (you can remove this after testing)
+            st.caption(f"Sources count: {len(source_documents) if source_documents else 0}")
+            
+            if source_documents and len(source_documents) > 0:
                 with st.expander("Resources"):
                     st.caption("Resources from your knowledge base")
                     
@@ -280,6 +273,9 @@ for idx, message in enumerate(st.session_state.messages):
                         excerpt = doc["excerpt"]
                         st.caption(f'**Excerpt:** "{excerpt}"')
                         st.markdown("---")
+            else:
+                # Show a message when no sources are found
+                st.caption("No specific sources found for this answer")
 
 # Handle user input
 if prompt := st.chat_input("Ask a question about your knowledge base..."):
