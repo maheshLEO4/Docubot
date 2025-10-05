@@ -18,10 +18,9 @@ def get_cached_qa_chain(groq_api_key, user_id):
 
 
 
-CONTEXT FROM USER'S DOCUMENTS:
-{context}
+CONTEXT :{context}
 
-USER'S QUESTION: {question}
+USER: {question}
 
 BASED ON THE ABOVE CONTEXT, PROVIDE A HELPFUL ANSWER:"""
         
