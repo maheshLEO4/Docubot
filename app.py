@@ -43,6 +43,8 @@ if 'user_files' not in st.session_state:
     st.session_state.user_files = []
 if 'user_urls' not in st.session_state:
     st.session_state.user_urls = []
+if 'source_docs' not in st.session_state:
+    st.session_state.source_docs = {}
 
 # Auto-load user data on login
 if user_id and not st.session_state.db_loaded:
@@ -180,6 +182,7 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.user_files = []
             st.session_state.user_urls = []
+            st.session_state.source_docs = {}
             st.toast(result, icon="✨")
             st.rerun()
 
@@ -240,7 +243,9 @@ with st.sidebar:
     st.markdown("---")
     if st.button("Clear Chat History", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.source_docs = {}
         st.toast("Chat history cleared!", icon="🧹")
+        st.rerun()
     
     # Display document info
     if st.session_state.get('is_processed', False):
@@ -259,15 +264,39 @@ st.markdown("Ask questions about your uploaded PDFs and scraped websites.")
 # Display welcome message
 if not st.session_state.messages:
     if st.session_state.is_processed:
-        st.success(f"Ready! Your knowledge base is loaded and ready for questions.")
+        st.success("Ready! Your knowledge base is loaded and ready for questions.")
         st.info("Using Qdrant Cloud for fast, scalable vector search")
     else:
         st.info("Upload PDFs or add websites in the sidebar to build your knowledge base.")
 
-# Display chat messages
-for message in st.session_state.messages:
+# Display chat messages with sources
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message['role']):
         st.markdown(message['content'])
+        
+        # Show sources for assistant messages
+        if message['role'] == 'assistant' and idx in st.session_state.source_docs:
+            source_documents = st.session_state.source_docs[idx]
+            if source_documents:
+                with st.expander("Source References"):
+                    st.caption("Sources from your knowledge base")
+                    
+                    for i, doc in enumerate(source_documents, 1):
+                        source_icon = "🌐" if doc.get('type') == 'web' else "📄"
+                        source_name = doc['document']
+                        
+                        if len(source_name) > 50:
+                            display_name = source_name[:47] + "..."
+                        else:
+                            display_name = source_name
+                        
+                        st.markdown(f"**{source_icon} Source {i}:** `{display_name}`")
+                        
+                        if doc['page'] != 'N/A':
+                            st.caption(f"**Page:** {doc['page']}")
+                        
+                        st.caption(f'**Excerpt:** "{doc["excerpt"]}"')
+                        st.markdown("---")
 
 # Handle user input
 if prompt := st.chat_input("Ask a question about your knowledge base..."):
@@ -280,29 +309,33 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
         try:
             with st.spinner("Thinking..."):
                 import time
-                start_time = time.time()
+                
+                # Timing diagnostics
+                total_start = time.time()
                 
                 # Use the query processor with the API key
-                result = process_query(prompt, api_key, user_id) 
-                processing_time = time.time() - start_time
+                result = process_query(prompt, api_key, user_id)
+                
+                total_time = time.time() - total_start
                 
                 if result['success']:
-                    enhanced_result = result['answer']
+                    answer = result['answer']
                     source_documents = result['sources']
 
                     with st.chat_message('assistant'):
-                        st.markdown(enhanced_result)
+                        st.markdown(answer)
+                        
+                        # Show timing info (remove this line after testing speed)
+                        st.caption(f"⏱️ Response time: {total_time:.2f}s")
 
                         if source_documents:
                             with st.expander("Source References"):
                                 st.caption("Sources from your knowledge base")
                                 
                                 for i, doc in enumerate(source_documents, 1):
-                                    # Show appropriate icon based on source type
                                     source_icon = "🌐" if doc.get('type') == 'web' else "📄"
                                     source_name = doc['document']
                                     
-                                    # Truncate long URLs for display
                                     if len(source_name) > 50:
                                         display_name = source_name[:47] + "..."
                                     else:
@@ -316,15 +349,18 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                     st.caption(f'**Excerpt:** "{doc["excerpt"]}"')
                                     st.markdown("---")
 
-                    st.session_state.messages.append({'role': 'assistant', 'content': enhanced_result})
+                    # Store message and sources
+                    message_index = len(st.session_state.messages)
+                    st.session_state.messages.append({'role': 'assistant', 'content': answer})
+                    st.session_state.source_docs[message_index] = source_documents
                     
                     # Log query in MongoDB
                     db_manager.log_query(
                         user_id=user_id,
                         query=prompt,
-                        response=enhanced_result,
+                        response=answer,
                         sources_used=source_documents,
-                        processing_time=processing_time
+                        processing_time=total_time
                     )
                 else:
                     error_msg = result['error']
