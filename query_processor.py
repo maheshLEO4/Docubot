@@ -16,13 +16,7 @@ def get_cached_qa_chain(groq_api_key, user_id):
         # Improved prompt for document-specific responses
         CUSTOM_PROMPT_TEMPLATE = """You are a helpful AI assistant for DocuBot. Your role is to answer questions based ONLY on the provided context from the user's uploaded documents and websites.
 
-IMPORTANT INSTRUCTIONS:
-- Answer questions using ONLY the information from the context below
-- If the context doesn't contain relevant information, say "I couldn't find specific information about this in your knowledge base."
-- Be precise and factual - don't make up information
-- Focus on the most relevant parts of the context
-- If the context has multiple perspectives, mention this
-- Keep answers clear and concise but informative
+
 
 CONTEXT FROM USER'S DOCUMENTS:
 {context}
