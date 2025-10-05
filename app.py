@@ -229,15 +229,28 @@ with st.sidebar:
         st.session_state.expanded_sections['sources'] = {}
         st.toast("Chat history cleared!", icon="🧹")
     
-    # Display stats
+    # Display stats with error handling
     if st.session_state.vector_store_exists:
         st.markdown("---")
         st.subheader("Knowledge Base Info")
         
-        stats = db_manager.get_user_stats(user_id)
-        st.write(f"**Files:** {stats['files_uploaded']}")
-        st.write(f"**Websites:** {stats['websites_scraped']}")
-        st.write(f"**Queries:** {stats['queries_processed']}")
+        try:
+            stats = db_manager.get_user_stats(user_id)
+            
+            # Safe stat display with fallbacks
+            files_count = stats.get('files_uploaded', len(st.session_state.cached_user_files))
+            websites_count = stats.get('websites_scraped', len(st.session_state.cached_user_scrapes))
+            queries_count = stats.get('queries_processed', 0)
+            
+            st.write(f"**Files:** {files_count}")
+            st.write(f"**Websites:** {websites_count}")
+            st.write(f"**Queries:** {queries_count}")
+            
+        except Exception as e:
+            # Fallback if stats aren't available
+            st.write(f"**Files:** {len(st.session_state.cached_user_files)}")
+            st.write(f"**Websites:** {len(st.session_state.cached_user_scrapes)}")
+            st.write("**Queries:** 0")
 
 # --- Optimized Main Chat ---
 st.title("DocuBot AI: Chat with Your Documents & Websites")
@@ -315,13 +328,17 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                     
                     # Log query (non-blocking)
                     if source_documents:
-                        db_manager.log_query(
-                            user_id=user_id,
-                            query=prompt,
-                            response=answer,
-                            sources_used=source_documents,
-                            processing_time=0
-                        )
+                        try:
+                            db_manager.log_query(
+                                user_id=user_id,
+                                query=prompt,
+                                response=answer,
+                                sources_used=source_documents,
+                                processing_time=0
+                            )
+                        except Exception as e:
+                            # Silently fail query logging - it's not critical
+                            print(f"Query logging failed: {e}")
                 else:
                     st.error(f"❌ {result['error']}")
 
