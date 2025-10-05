@@ -13,37 +13,43 @@ def get_cached_qa_chain(groq_api_key, user_id):
         if db is None:
             return None
 
-        # Improved prompt for document-specific responses
-        CUSTOM_PROMPT_TEMPLATE = """You are a helpful AI assistant for DocuBot. Your role is to answer questions based ONLY on the provided context from the user's uploaded documents and websites.
+        # Improved prompt for better responses
+        CUSTOM_PROMPT_TEMPLATE = """You are DocuBot AI, a helpful assistant that answers questions based on the user's uploaded documents and websites.
 
+IMPORTANT INSTRUCTIONS:
+- Answer questions using ONLY the information provided in the CONTEXT below
+- If the context contains relevant information, provide a clear and helpful answer
+- If the context doesn't contain enough information to answer the question, say: "I don't have enough information in your knowledge base to answer this question accurately."
+- Always be specific and cite what you found in the documents
+- Never make up information that isn't in the context
 
+CONTEXT FROM YOUR KNOWLEDGE BASE:
+{context}
 
-CONTEXT :{context}
+USER QUESTION: {question}
 
-USER: {question}
-
-BASED ON THE ABOVE CONTEXT, PROVIDE A HELPFUL ANSWER:"""
+YOUR ANSWER (based only on the context above):"""
         
         prompt = PromptTemplate(
             template=CUSTOM_PROMPT_TEMPLATE, 
             input_variables=["context", "question"]
         )
 
-        # Optimized retriever with smaller context
+        # FIXED: More lenient retriever settings
         retriever = db.as_retriever(
             search_type="similarity",
             search_kwargs={
-                'k': 3,  # Increased to 3 for better coverage
-                'score_threshold': 0.6  # Slightly lower threshold to catch more relevant docs
+                'k': 5,  # Retrieve more documents for better coverage
+                # Removed score_threshold - let the LLM decide relevance
             }
         )
         
-        # Faster LLM configuration
+        # Optimized LLM configuration
         llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
-            temperature=0.1,
-            max_tokens=300,  # Increased for more detailed answers
-            timeout=15,  # Slightly longer timeout
+            temperature=0.2,  # Slightly higher for more natural responses
+            max_tokens=400,  # More room for detailed answers
+            timeout=20,
             groq_api_key=groq_api_key,
         )
         
@@ -63,14 +69,14 @@ BASED ON THE ABOVE CONTEXT, PROVIDE A HELPFUL ANSWER:"""
 def format_source_documents(source_documents):
     """Fast source document formatting."""
     formatted_sources = []
+    seen_sources = set()  # Prevent duplicates
     
     for doc in source_documents:
         try:
-            # Fast metadata extraction
             metadata = doc.metadata
             source = metadata.get('source', 'Unknown')
             
-            # Determine source type and name quickly
+            # Determine source type and name
             if isinstance(source, str) and source.startswith(('http://', 'https://')):
                 source_type = 'web'
                 source_name = source
@@ -78,13 +84,22 @@ def format_source_documents(source_documents):
                 source_type = 'pdf'
                 source_name = os.path.basename(str(source)) if source else 'Unknown'
             
-            # Simple page number handling
+            # Create unique identifier
             page_num = metadata.get('page', 'N/A')
             if isinstance(page_num, int):
                 page_num += 1
             
-            # Fast excerpt truncation
-            excerpt = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+            source_id = f"{source_name}_{page_num}"
+            
+            # Skip duplicates
+            if source_id in seen_sources:
+                continue
+            seen_sources.add(source_id)
+            
+            # Excerpt with better truncation
+            excerpt = doc.page_content.strip()
+            if len(excerpt) > 250:
+                excerpt = excerpt[:247] + "..."
             
             formatted_sources.append({
                 'document': source_name,
@@ -93,15 +108,16 @@ def format_source_documents(source_documents):
                 'type': source_type
             })
             
-        except Exception:
-            # Skip problematic documents silently
+        except Exception as e:
+            print(f"Error formatting source: {e}")
             continue
     
     return formatted_sources
+
 def process_query(prompt, groq_api_key, user_id):
     """Fast query processing with error handling."""
     try:
-        # Get cached chain (fast)
+        # Get cached chain
         qa_chain = get_cached_qa_chain(groq_api_key, user_id)
         
         if not qa_chain:
@@ -110,18 +126,13 @@ def process_query(prompt, groq_api_key, user_id):
                 'error': "Knowledge base not ready. Please add documents first."
             }
         
-        # Fast invocation
+        # Process query
         response = qa_chain.invoke({'query': prompt})
         result = response.get("result", "No answer generated.")
         source_documents = response.get("source_documents", [])
         
-        print(f"DEBUG: Raw source documents: {source_documents}")  # Debug line
-        print(f"DEBUG: Number of source documents: {len(source_documents)}")  # Debug line
-        
-        # Fast formatting
+        # Format sources
         formatted_sources = format_source_documents(source_documents)
-        
-        print(f"DEBUG: Formatted sources: {formatted_sources}")  # Debug line
         
         return {
             'success': True,
@@ -130,7 +141,7 @@ def process_query(prompt, groq_api_key, user_id):
         }
             
     except Exception as e:
-        # Specific error handling for common cases
+        # Specific error handling
         error_msg = "Sorry, I encountered an issue processing your question. Please try again."
         
         if "timeout" in str(e).lower():
