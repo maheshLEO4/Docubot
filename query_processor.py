@@ -13,14 +13,20 @@ def get_cached_qa_chain(groq_api_key, user_id):
         return None
 
     # Simplified prompt
-    CUSTOM_PROMPT_TEMPLATE = """Answer the question using the context provided. Be concise.
+    CUSTOM_PROMPT_TEMPLATE = """Using the provided context, answer the question with accuracy and clarity.
 
-Context: {context}
+    Context:
+    {context}
 
-Question: {question}
+    Question: {question}
 
-Answer:"""
+    Provide a well-structured answer that:
+    - Directly addresses the question
+    - Cites specific information from the context
+    - Acknowledges any limitations in the available information
+    - Uses clear, professional language
 
+    Answer:"""
     prompt = PromptTemplate(
         template=CUSTOM_PROMPT_TEMPLATE, 
         input_variables=["context", "question"]
