@@ -99,7 +99,7 @@ class AuthManager:
 
 def setup_authentication():
     """Setup email/password authentication"""
-    st.sidebar.title("🔐 DocuBot AI")
+    st.sidebar.title("DocuBot AI")
     
     # Initialize session state
     if 'user' not in st.session_state:
@@ -110,22 +110,22 @@ def setup_authentication():
     # Return user_id if already authenticated
     if st.session_state.user:
         user_data = st.session_state.user
-        st.sidebar.success(f"👋 Welcome, {user_data['name']}!")
-        st.sidebar.caption(f"📧 {user_data['email']}")
+        st.sidebar.success(f"Welcome, {user_data['name']}!")
+        st.sidebar.caption(f"{user_data['email']}")
         
-        # Show user stats
+        # Show user stats (removed queries from display)
         try:
             stats = st.session_state.auth_manager.db.get_user_stats(user_data['user_id'])
             col1, col2 = st.sidebar.columns(2)
             with col1:
-                st.metric("📄 Files", stats['files_uploaded'])
+                st.metric("Files", stats['files_uploaded'])
             with col2:
-                st.metric("💬 Queries", stats['queries_made'])
+                st.metric("Websites", stats['websites_scraped'])
         except Exception:
-            st.sidebar.info("📊 Stats will appear after you use the app")
+            st.sidebar.info("Stats will appear after you use the app")
         
         # Sign out
-        if st.sidebar.button("🚪 Sign Out", use_container_width=True, type="secondary"):
+        if st.sidebar.button("Sign Out", use_container_width=True, type="secondary"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -133,7 +133,7 @@ def setup_authentication():
         return user_data['user_id']
     
     # Not authenticated - show login/register
-    tab1, tab2 = st.sidebar.tabs(["🔐 Login", "📝 Register"])
+    tab1, tab2 = st.sidebar.tabs(["Login", "Register"])
     
     with tab1:
         st.subheader("Login to Your Account")
@@ -167,7 +167,7 @@ def setup_authentication():
                 else:
                     success, message = st.session_state.auth_manager.register_user(reg_email, reg_password, reg_name)
                     if success:
-                        st.success("✅ Registration successful! Please login.")
+                        st.success("Registration successful! Please login.")
                     else:
                         st.error(message)
             else:
@@ -175,7 +175,7 @@ def setup_authentication():
     
     # Demo accounts
     st.sidebar.markdown("---")
-    st.sidebar.caption("🚀 Quick Start (Auto-login)")
+    st.sidebar.caption("Quick Start (Auto-login)")
     col1, col2 = st.sidebar.columns(2)
     
     with col1:

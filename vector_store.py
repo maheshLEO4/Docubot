@@ -2,7 +2,7 @@ import os
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Qdrant
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 from data_processing import get_document_chunks
 from web_scraper import scrape_urls_to_chunks
 from config import get_qdrant_config
@@ -79,6 +79,67 @@ def clear_all_data(user_id):
     except Exception as e:
         return f"Error clearing data: {str(e)}"
 
+def remove_documents_from_store(user_id, source, doc_type):
+    """Remove specific documents from vector store by source"""
+    if not user_id:
+        return False
+    
+    try:
+        qdrant_config = get_qdrant_config()
+        client = QdrantClient(
+            url=qdrant_config['url'],
+            api_key=qdrant_config['api_key']
+        )
+        collection_name = get_user_collection_name(user_id)
+        
+        # Delete points with matching source in metadata
+        # For PDFs, match basename; for URLs, match full URL
+        if doc_type == 'pdf':
+            # Search for documents with source containing this filename
+            scroll_result = client.scroll(
+                collection_name=collection_name,
+                limit=10000
+            )
+            
+            points_to_delete = []
+            for point in scroll_result[0]:
+                if point.payload and 'metadata' in point.payload:
+                    metadata_source = point.payload['metadata'].get('source', '')
+                    if os.path.basename(metadata_source) == source or metadata_source.endswith(source):
+                        points_to_delete.append(point.id)
+            
+            if points_to_delete:
+                client.delete(
+                    collection_name=collection_name,
+                    points_selector=points_to_delete
+                )
+        else:  # web
+            # For web URLs, match exact URL
+            scroll_result = client.scroll(
+                collection_name=collection_name,
+                limit=10000
+            )
+            
+            points_to_delete = []
+            for point in scroll_result[0]:
+                if point.payload and 'metadata' in point.payload:
+                    metadata_source = point.payload['metadata'].get('source', '')
+                    if metadata_source == source:
+                        points_to_delete.append(point.id)
+            
+            if points_to_delete:
+                client.delete(
+                    collection_name=collection_name,
+                    points_selector=points_to_delete
+                )
+        
+        print(f"✅ Removed {len(points_to_delete)} points for source: {source}")
+        return True
+        
+    except Exception as e:
+        print(f"Error removing documents: {e}")
+        return False
+
 def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
     """Build vector store from PDF documents"""
     if not user_id:
@@ -106,7 +167,7 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
         for filename in processed_files:
             db_manager.log_file_upload(
                 user_id=user_id,
-                filename=filename,
+                filename=os.path.basename(filename),
                 file_size=os.path.getsize(filename) if os.path.exists(filename) else 0,
                 pages_processed=len([chunk for chunk in chunks if chunk.metadata.get('source') == filename])
             )

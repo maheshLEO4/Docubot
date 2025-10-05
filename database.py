@@ -96,6 +96,15 @@ class MongoDBManager:
             print(f"Error logging file upload: {e}")
             return str(uuid.uuid4())
     
+    def delete_file_upload(self, upload_id):
+        """Delete file upload record"""
+        try:
+            self.file_uploads.delete_one({'upload_id': upload_id})
+            return True
+        except Exception as e:
+            print(f"Error deleting file upload: {e}")
+            return False
+    
     def log_web_scrape(self, user_id, urls, successful_urls, total_chunks):
         """Log web scraping activity"""
         try:
@@ -115,6 +124,25 @@ class MongoDBManager:
         except Exception as e:
             print(f"Error logging web scrape: {e}")
             return str(uuid.uuid4())
+    
+    def delete_web_scrape(self, scrape_id):
+        """Delete web scrape record"""
+        try:
+            self.web_scrapes.delete_one({'scrape_id': scrape_id})
+            return True
+        except Exception as e:
+            print(f"Error deleting web scrape: {e}")
+            return False
+    
+    def clear_user_data(self, user_id):
+        """Clear all user data from MongoDB"""
+        try:
+            self.file_uploads.delete_many({'user_id': user_id})
+            self.web_scrapes.delete_many({'user_id': user_id})
+            return True
+        except Exception as e:
+            print(f"Error clearing user data: {e}")
+            return False
     
     def log_query(self, user_id, query, response, sources_used, processing_time):
         """Log user queries for analytics"""
