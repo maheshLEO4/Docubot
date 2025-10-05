@@ -20,7 +20,7 @@ Context: {context}
 
 Question: {question}
 
-Answer clearly and concisely. If unsure, say so   if you dont have any info say  i dont know  and dont use words like based  on the conext .
+Answer clearly and concisely. If unsure, say so.
 
 Answer:"""
         

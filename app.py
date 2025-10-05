@@ -7,11 +7,22 @@ from vector_store import (
 )
 from query_processor import process_query
 from config import validate_api_key
-from auth import setup_authentication
 from database import MongoDBManager
 
 # --- Configuration ---
-st.set_page_config(page_title="DocuBot AI", page_icon="🤖", layout="wide")
+st.set_page_config(
+    page_title="DocuBot AI - Chat",
+    page_icon="🤖", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Check if user is authenticated
+if 'user' not in st.session_state:
+    st.warning("🔐 Please login first to access DocuBot AI")
+    if st.button("Go to Login Page"):
+        st.switch_page("auth_app.py")
+    st.stop()
 
 # Get API key
 try:
@@ -20,10 +31,8 @@ except ValueError as e:
     st.error(str(e))
     st.stop()
 
-# Setup authentication
-user_id = setup_authentication()
-
-# Initialize database
+# Get user data
+user_id = st.session_state.user['user_id']
 db_manager = MongoDBManager()
 
 # Initialize session state with caching
@@ -51,20 +60,30 @@ if user_id and not st.session_state.user_data_loaded:
         except Exception as e:
             st.error(f"Error loading knowledge base: {str(e)}")
 
-# --- Optimized Sidebar ---
+# --- Sidebar ---
 with st.sidebar:
     st.title("DocuBot Controls")
     
-    # Lightweight storage info
+    # User info
+    user_data = st.session_state.user
+    st.success(f"Welcome, {user_data['name']}!")
+    st.caption(f"{user_data['email']}")
+    
+    # Navigation
+    st.markdown("---")
+    if st.button("🚪 Switch to Login Page", use_container_width=True):
+        st.switch_page("auth_app.py")
+    
+    st.markdown("---")
     st.success("Using Qdrant Cloud Storage")
     
-    # Knowledge Base Section - With dropdowns
+    # Knowledge Base Section
     if st.session_state.vector_store_exists:
         st.markdown("---")
         st.subheader("Your Knowledge Base")
         
-        # Uploaded Files Dropdown
-        with st.expander("📁 Uploaded Files", expanded=True):
+        # Uploaded Files
+        with st.expander("Uploaded Files", expanded=True):
             if st.session_state.cached_user_files:
                 for file_record in st.session_state.cached_user_files[:5]:
                     col1, col2 = st.columns([3, 1])
@@ -81,8 +100,8 @@ with st.sidebar:
             else:
                 st.info("No files uploaded yet")
         
-        # Scraped Websites Dropdown
-        with st.expander("🌐 Scraped Websites", expanded=True):
+        # Scraped Websites
+        with st.expander("Scraped Websites", expanded=True):
             if st.session_state.cached_user_scrapes:
                 for scrape_record in st.session_state.cached_user_scrapes:
                     for url in scrape_record.get('successful_urls', [])[:5]:
@@ -106,31 +125,59 @@ with st.sidebar:
     
     with input_tab1:
         uploaded_files = st.file_uploader(
-            "Upload PDF Documents", type=["pdf"], accept_multiple_files=True
+            "Upload PDF Documents", 
+            type=["pdf"], 
+            accept_multiple_files=True,
+            help="Select one or more PDF files to add to your knowledge base"
         )
     
     with input_tab2:
-        website_urls = st.text_area("Website URLs", placeholder="Enter one URL per line")
+        website_urls = st.text_area(
+            "Website URLs", 
+            placeholder="Enter one URL per line\nExample:\nhttps://example.com\nhttps://docs.streamlit.io",
+            help="Add websites to scrape and include in your knowledge base"
+        )
         urls_list = [url.strip() for url in website_urls.split('\n') if url.strip()] if website_urls else []
 
-    # Processing - optimized
+    # Processing Options
     st.markdown("---")
     st.subheader("Processing Options")
     
     processing_mode = st.radio(
         "Processing Mode:",
         ["Add New Content", "Replace All Content"],
-        disabled=not st.session_state.vector_store_exists
+        disabled=not st.session_state.vector_store_exists,
+        help="Add to existing knowledge base or replace everything"
     )
     
-    # Process buttons with better state management
-    process_pdfs_clicked = st.button("Process PDFs", use_container_width=True, 
-                                   disabled=not uploaded_files)
-    process_websites_clicked = st.button("Scrape Websites", use_container_width=True,
-                                       disabled=not urls_list)
+    # Process buttons
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        process_pdfs_clicked = st.button(
+            "Process PDFs", 
+            use_container_width=True, 
+            type="primary",
+            disabled=not uploaded_files
+        )
+        
+        process_websites_clicked = st.button(
+            "Scrape Websites", 
+            use_container_width=True,
+            type="primary",
+            disabled=not urls_list
+        )
+
+    with col2:
+        clear_all_clicked = st.button(
+            "Clear All", 
+            use_container_width=True, 
+            type="secondary",
+            help="Clear entire knowledge base and chat history"
+        )
 
     # Handle processing without reruns
-    if process_pdfs_clicked:
+    if process_pdfs_clicked and uploaded_files:
         with st.spinner("Processing PDF documents..."):
             try:
                 new_files = save_uploaded_files(uploaded_files, user_id)
@@ -142,10 +189,12 @@ with st.sidebar:
                     st.session_state.vector_store_exists = True
                     st.session_state.cached_user_files = db_manager.get_user_files(user_id)
                     st.success(f"PDF documents {action} successfully!")
+                    if new_files:
+                        st.toast(f"Added {len(new_files)} new documents", icon="📄")
             except Exception as e:
                 st.error(f"Error processing PDFs: {str(e)}")
 
-    if process_websites_clicked:
+    if process_websites_clicked and urls_list:
         with st.spinner(f"Scraping {len(urls_list)} website(s)..."):
             try:
                 db, action = build_vector_store_from_urls(
@@ -156,55 +205,99 @@ with st.sidebar:
                     st.session_state.vector_store_exists = True
                     st.session_state.cached_user_scrapes = db_manager.get_user_scrapes(user_id)
                     st.success(f"Websites {action} successfully!")
+                    st.toast(f"Scraped {len(urls_list)} website(s)", icon="🌐")
             except Exception as e:
                 st.error(f"Error scraping websites: {str(e)}")
 
     # Clear buttons
+    if clear_all_clicked:
+        with st.spinner("Clearing all data..."):
+            result = clear_all_data(user_id)
+            db_manager.clear_user_data(user_id)
+            st.session_state.vector_store_exists = False
+            st.session_state.cached_user_files = []
+            st.session_state.cached_user_scrapes = []
+            st.session_state.messages = []
+            st.session_state.source_docs = {}
+            st.toast(result, icon="✨")
+
+    st.markdown("---")
     if st.button("Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.session_state.source_docs = {}
         st.toast("Chat history cleared!", icon="🧹")
+    
+    # Display stats
+    if st.session_state.vector_store_exists:
+        st.markdown("---")
+        st.subheader("Knowledge Base Info")
+        
+        try:
+            stats = db_manager.get_user_stats(user_id)
+            files_count = stats.get('files_uploaded', len(st.session_state.cached_user_files))
+            websites_count = stats.get('websites_scraped', len(st.session_state.cached_user_scrapes))
+            
+            st.write(f"**Files:** {files_count}")
+            st.write(f"**Websites:** {websites_count}")
+            
+        except Exception:
+            st.write(f"**Files:** {len(st.session_state.cached_user_files)}")
+            st.write(f"**Websites:** {len(st.session_state.cached_user_scrapes)}")
 
-# --- Optimized Main Chat ---
+# --- Main Chat ---
 st.title("DocuBot AI: Chat with Your Documents & Websites")
+st.markdown("Ask questions about your uploaded PDFs and scraped websites.")
 
-# Welcome message
+# Display welcome message
 if not st.session_state.messages:
     if st.session_state.vector_store_exists:
-        st.success("Ready! Your knowledge base is loaded.")
+        st.success("Ready! Your knowledge base is loaded and ready for questions.")
+        st.info("Using Qdrant Cloud for fast, scalable vector search")
     else:
-        st.info("Upload PDFs or add websites to build your knowledge base.")
+        st.info("Upload PDFs or add websites in the sidebar to build your knowledge base.")
 
-# Optimized message display
+# Display chat messages
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message['role']):
         st.markdown(message['content'])
         
-        # Show sources dropdown for assistant messages
+        # Show resources ONLY for the last assistant message
         if (message['role'] == 'assistant' and 
             idx in st.session_state.source_docs and
-            st.session_state.source_docs[idx]):
+            st.session_state.source_docs[idx] and
+            idx == len(st.session_state.messages) - 1):  # Only show for last message
             
-            source_count = len(st.session_state.source_docs[idx])
-            with st.expander(f"📚 Source References ({source_count})", expanded=True):
-                for i, doc in enumerate(st.session_state.source_docs[idx], 1):
-                    source_icon = "🌐" if doc.get('type') == 'web' else "📄"
-                    source_name = doc['document']
-                    display_name = source_name[:47] + "..." if len(source_name) > 50 else source_name
+            source_documents = st.session_state.source_docs[idx]
+            if source_documents:
+                with st.expander("Resources"):
+                    st.caption("Resources from your knowledge base")
                     
-                    st.markdown(f"**{source_icon} Source {i}:** `{display_name}`")
-                    if doc['page'] != 'N/A':
-                        st.caption(f"**Page:** {doc['page']}")
-                    st.caption(f'**Excerpt:** "{doc["excerpt"]}"')
-                    st.markdown("---")
+                    for i, doc in enumerate(source_documents, 1):
+                        source_icon = "🌐" if doc.get('type') == 'web' else "📄"
+                        source_name = doc['document']
+                        
+                        # Display source name
+                        if len(source_name) > 50:
+                            display_name = source_name[:47] + "..."
+                        else:
+                            display_name = source_name
+                        
+                        st.markdown(f"**{source_icon} Resource {i}:** `{display_name}`")
+                        
+                        if doc['page'] != 'N/A':
+                            st.caption(f"**Page:** {doc['page']}")
+                        
+                        excerpt = doc["excerpt"]
+                        st.caption(f'**Excerpt:** "{excerpt}"')
+                        st.markdown("---")
 
-# Chat input with optimized processing
+# Handle user input
 if prompt := st.chat_input("Ask a question about your knowledge base..."):
     st.chat_message('user').markdown(prompt)
     st.session_state.messages.append({'role': 'user', 'content': prompt})
 
     if not st.session_state.vector_store_exists:
-        st.warning("Please add content before asking questions.")
+        st.warning("Please add some content (PDFs or websites) before asking questions.")
     else:
         try:
             with st.spinner("Thinking..."):
@@ -216,20 +309,46 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
 
                     with st.chat_message('assistant'):
                         st.markdown(answer)
-
+                        
+                        if source_documents:
+                            with st.expander("Resources"):
+                                st.caption("Resources from your knowledge base")
+                                
+                                for i, doc in enumerate(source_documents, 1):
+                                    source_icon = "🌐" if doc.get('type') == 'web' else "📄"
+                                    source_name = doc['document']
+                                    
+                                    if len(source_name) > 50:
+                                        display_name = source_name[:47] + "..."
+                                    else:
+                                        display_name = source_name
+                                    
+                                    st.markdown(f"**{source_icon} Resource {i}:** `{display_name}`")
+                                    
+                                    if doc['page'] != 'N/A':
+                                        st.caption(f"**Page:** {doc['page']}")
+                                    
+                                    excerpt = doc["excerpt"]
+                                    st.caption(f'**Excerpt:** "{excerpt}"')
+                                    st.markdown("---")
+                    
                     # Store message and sources
                     message_index = len(st.session_state.messages)
                     st.session_state.messages.append({'role': 'assistant', 'content': answer})
                     st.session_state.source_docs[message_index] = source_documents
                     
                     # Log query (non-blocking)
-                    db_manager.log_query(
-                        user_id=user_id,
-                        query=prompt,
-                        response=answer,
-                        sources_used=source_documents,
-                        processing_time=0
-                    )
+                    if source_documents:
+                        try:
+                            db_manager.log_query(
+                                user_id=user_id,
+                                query=prompt,
+                                response=answer,
+                                sources_used=source_documents,
+                                processing_time=0
+                            )
+                        except Exception:
+                            pass  # Silently fail query logging
                 else:
                     st.error(result['error'])
 

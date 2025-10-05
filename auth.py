@@ -3,6 +3,14 @@ import hashlib
 import bcrypt
 from database import MongoDBManager
 
+# --- Page Configuration ---
+st.set_page_config(
+    page_title="DocuBot AI - Login",
+    page_icon="🔐",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
 class AuthManager:
     def __init__(self):
         self.db = MongoDBManager()
@@ -97,107 +105,107 @@ class AuthManager:
         except Exception as e:
             return False, f"Demo user creation failed: {str(e)}", None
 
-def setup_authentication():
-    """Setup email/password authentication"""
-    st.sidebar.title("DocuBot AI")
+# Initialize auth manager
+if 'auth_manager' not in st.session_state:
+    st.session_state.auth_manager = AuthManager()
+
+# Check if already logged in
+if 'user' in st.session_state and st.session_state.user:
+    st.success(f"✅ Already logged in as {st.session_state.user['name']}")
+    if st.button("🚀 Go to DocuBot Chat"):
+        st.switch_page("main_app.py")
+    st.stop()
+
+# --- Main Authentication UI ---
+st.title("🔐 DocuBot AI")
+st.markdown("### Login to access your AI document assistant")
+
+# Create tabs for login and register
+tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
+
+with tab1:
+    st.subheader("Login to Your Account")
     
-    # Initialize session state
-    if 'user' not in st.session_state:
-        st.session_state.user = None
-    if 'auth_manager' not in st.session_state:
-        st.session_state.auth_manager = AuthManager()
+    login_email = st.text_input("📧 Email", placeholder="your@email.com", key="login_email")
+    login_password = st.text_input("🔒 Password", type="password", placeholder="Enter your password", key="login_password")
     
-    # Return user_id if already authenticated
-    if st.session_state.user:
-        user_data = st.session_state.user
-        st.sidebar.success(f"Welcome, {user_data['name']}!")
-        st.sidebar.caption(f"{user_data['email']}")
-        
-        # Show user stats (removed queries from display)
-        try:
-            stats = st.session_state.auth_manager.db.get_user_stats(user_data['user_id'])
-            col1, col2 = st.sidebar.columns(2)
-            with col1:
-                st.metric("Files", stats['files_uploaded'])
-            with col2:
-                st.metric("Websites", stats['websites_scraped'])
-        except Exception:
-            st.sidebar.info("Stats will appear after you use the app")
-        
-        # Sign out
-        if st.sidebar.button("Sign Out", use_container_width=True, type="secondary"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-        
-        return user_data['user_id']
-    
-    # Not authenticated - show login/register
-    tab1, tab2 = st.sidebar.tabs(["Login", "Register"])
-    
-    with tab1:
-        st.subheader("Login to Your Account")
-        login_email = st.text_input("Email", key="login_email")
-        login_password = st.text_input("Password", type="password", key="login_password")
-        
-        if st.button("Login", key="login_btn", use_container_width=True, type="primary"):
-            if login_email and login_password:
+    if st.button("🚀 Login", use_container_width=True, type="primary"):
+        if login_email and login_password:
+            with st.spinner("Logging in..."):
                 success, message, user_data = st.session_state.auth_manager.login_user(login_email, login_password)
                 if success:
                     st.session_state.user = user_data
+                    st.success("✅ Login successful! Redirecting...")
                     st.rerun()
                 else:
-                    st.error(message)
-            else:
-                st.error("Please enter both email and password")
+                    st.error(f"❌ {message}")
+        else:
+            st.error("⚠️ Please enter both email and password")
+
+with tab2:
+    st.subheader("Create New Account")
     
-    with tab2:
-        st.subheader("Create New Account")
-        reg_email = st.text_input("Email", key="reg_email")
-        reg_name = st.text_input("Full Name", key="reg_name")
-        reg_password = st.text_input("Password", type="password", key="reg_password")
-        reg_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
-        
-        if st.button("Register", key="reg_btn", use_container_width=True):
-            if reg_email and reg_name and reg_password and reg_confirm:
-                if reg_password != reg_confirm:
-                    st.error("Passwords do not match")
-                elif len(reg_password) < 6:
-                    st.error("Password must be at least 6 characters")
-                else:
+    reg_email = st.text_input("📧 Email", placeholder="your@email.com", key="reg_email")
+    reg_name = st.text_input("👤 Full Name", placeholder="Your Full Name", key="reg_name")
+    reg_password = st.text_input("🔒 Password", type="password", placeholder="At least 6 characters", key="reg_password")
+    reg_confirm = st.text_input("✅ Confirm Password", type="password", placeholder="Re-enter your password", key="reg_confirm")
+    
+    if st.button("📝 Create Account", use_container_width=True):
+        if reg_email and reg_name and reg_password and reg_confirm:
+            if reg_password != reg_confirm:
+                st.error("❌ Passwords do not match")
+            elif len(reg_password) < 6:
+                st.error("❌ Password must be at least 6 characters")
+            else:
+                with st.spinner("Creating account..."):
                     success, message = st.session_state.auth_manager.register_user(reg_email, reg_password, reg_name)
                     if success:
-                        st.success("Registration successful! Please login.")
+                        st.success("✅ Registration successful! Please login.")
                     else:
-                        st.error(message)
-            else:
-                st.error("Please fill all fields")
-    
-    # Demo accounts
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Quick Start (Auto-login)")
-    col1, col2 = st.sidebar.columns(2)
-    
-    with col1:
-        if st.button("Demo User 1", use_container_width=True):
+                        st.error(f"❌ {message}")
+        else:
+            st.error("⚠️ Please fill all fields")
+
+# Demo accounts section
+st.markdown("---")
+st.subheader("🎯 Quick Start")
+st.markdown("Try DocuBot instantly with demo accounts:")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("👤 Demo User 1", use_container_width=True):
+        with st.spinner("Setting up demo account..."):
             success, message, user_data = st.session_state.auth_manager.create_demo_user(
                 "demo1@docubot.com", "demo123", "Demo User 1"
             )
             if success:
                 st.session_state.user = user_data
+                st.success("✅ Demo login successful! Redirecting...")
                 st.rerun()
             else:
-                st.error(message)
-    
-    with col2:
-        if st.button("Demo User 2", use_container_width=True):
+                st.error(f"❌ {message}")
+
+with col2:
+    if st.button("👤 Demo User 2", use_container_width=True):
+        with st.spinner("Setting up demo account..."):
             success, message, user_data = st.session_state.auth_manager.create_demo_user(
                 "demo2@docubot.com", "demo123", "Demo User 2"
             )
             if success:
                 st.session_state.user = user_data
+                st.success("✅ Demo login successful! Redirecting...")
                 st.rerun()
             else:
-                st.error(message)
-    
-    st.stop()
+                st.error(f"❌ {message}")
+
+# Footer
+st.markdown("---")
+st.markdown(
+    """
+    <div style='text-align: center; color: gray;'>
+        <p>DocuBot AI - Chat with your documents and websites</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
