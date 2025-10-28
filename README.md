@@ -53,7 +53,7 @@ It’s like having your own **AI research assistant** — capable of understandi
 | **Backend** | Python |
 | **Database** | MongoDB |
 | **Vector Store** | FAISS / Qdrant |
-| **Embeddings & LLMs** | OpenAI / Groq |
+| **Embeddings & LLMs** | Groq |
 | **Auth & User Management** | MongoDB Users Collection |
 | **Web Scraping** | Requests + BeautifulSoup |
 
@@ -80,7 +80,6 @@ It’s like having your own **AI research assistant** — capable of understandi
 Before running Docubot, create a `.env` file in your project root with:
 
 ```env
-OPENAI_API_KEY=your-openai-api-key
 QDRANT_URL=your-qdrant-url
 QDRANT_API_KEY=your-qdrant-api-key
 GROQ_API_KEY=your-groq-api-key
@@ -89,13 +88,12 @@ MONGODB_URI=your-mongodb-uri
 
 | Variable         | Description                                      |
 | ---------------- | ------------------------------------------------ |
-| `OPENAI_API_KEY` | For generating embeddings and LLM responses      |
 | `QDRANT_URL`     | Vector database endpoint (if using Qdrant Cloud) |
 | `QDRANT_API_KEY` | Auth key for Qdrant                              |
 | `GROQ_API_KEY`   | Alternative LLM provider (optional)              |
 | `MONGODB_URI`    | MongoDB connection string for user data & logs   |
 
-> 💡 Tip: Add `.env` to `.gitignore` to keep keys private.
+
 
 ---
 
