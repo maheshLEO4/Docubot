@@ -22,7 +22,7 @@ class VectorStoreManager:
     def _get_embedding_model(_self):
         """Cached embedding model"""
         try:
-            # Updated import for langchain-huggingface
+            # Use the new import path
             from langchain_huggingface import HuggingFaceEmbeddings
             return HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -30,16 +30,26 @@ class VectorStoreManager:
                 encode_kwargs={'normalize_embeddings': True}
             )
         except ImportError:
-            # Fallback to old import
-            from langchain_community.embeddings import HuggingFaceEmbeddings
-            return HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
-        except Exception as e:
-            print(f"Error loading embedding model: {e}")
-            return None
+            # Fallback if new package not installed
+            try:
+                from langchain_community.embeddings import HuggingFaceEmbeddings
+                return HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}
+                )
+            except ImportError:
+                # Direct use of sentence-transformers
+                from sentence_transformers import SentenceTransformer
+                model = SentenceTransformer('all-MiniLM-L6-v2')
+                
+                class SimpleEmbeddings:
+                    def embed_query(self, text: str):
+                        return model.encode(text).tolist()
+                    def embed_documents(self, texts: List[str]):
+                        return [model.encode(text).tolist() for text in texts]
+                
+                return SimpleEmbeddings()
     
     @st.cache_resource(ttl=300)
     def _get_qdrant_client(_self):
@@ -57,12 +67,12 @@ class VectorStoreManager:
                 check_compatibility=False
             )
             
-            # Simple connection test
+            # Test connection
             try:
                 client.get_collections()
                 return client
             except Exception as e:
-                print(f"Qdrant connection test failed: {e}")
+                print(f"Qdrant connection failed: {e}")
                 return None
                 
         except Exception as e:
@@ -79,12 +89,10 @@ class VectorStoreManager:
         try:
             client = self._get_qdrant_client()
             if not client:
-                print("Qdrant client not available")
                 return None
             
             embeddings = self._get_embedding_model()
             if not embeddings:
-                print("Embedding model not available")
                 return None
             
             # Create collection if it doesn't exist
@@ -96,17 +104,32 @@ class VectorStoreManager:
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE)
                 )
             
-            # Try new import first, fallback to old
+            # Use QdrantVectorStore instead of Qdrant
             try:
-                from langchain_qdrant import Qdrant
-            except ImportError:
-                from langchain_community.vectorstores import Qdrant
-            
-            store = Qdrant(
-                client=client,
-                collection_name=self.collection_name,
-                embeddings=embeddings
-            )
+                # Try the new class name
+                from langchain_qdrant import QdrantVectorStore
+                store = QdrantVectorStore(
+                    client=client,
+                    collection_name=self.collection_name,
+                    embeddings=embeddings
+                )
+            except (ImportError, AttributeError):
+                # Fallback to old name
+                try:
+                    from langchain_qdrant import Qdrant
+                    store = Qdrant(
+                        client=client,
+                        collection_name=self.collection_name,
+                        embeddings=embeddings
+                    )
+                except (ImportError, AttributeError):
+                    # Fallback to community version
+                    from langchain_community.vectorstores import Qdrant
+                    store = Qdrant(
+                        client=client,
+                        collection_name=self.collection_name,
+                        embeddings=embeddings
+                    )
             
             # Cache the store
             st.session_state.vector_cache[cache_key] = store
@@ -123,16 +146,15 @@ class VectorStoreManager:
             if not store:
                 return False
             
-            # Try to perform a simple search to see if there's data
+            # Try a simple search to see if there's data
             try:
-                results = store.similarity_search("test query", k=1)
+                results = store.similarity_search("test", k=1)
                 return len(results) > 0
             except:
-                # If search fails, collection might be empty
                 return False
                 
         except Exception as e:
-            print(f"Error checking vector store existence: {e}")
+            print(f"Error checking existence: {e}")
             return False
     
     def add_documents(self, documents: List, doc_type: str = "pdf") -> bool:
@@ -143,13 +165,11 @@ class VectorStoreManager:
             
             store = self.get_store()
             if not store:
-                print("Vector store not available")
                 return False
             
-            # Add documents
             store.add_documents(documents)
             
-            # Clear cache to force refresh
+            # Clear cache
             cache_key = f"store_{self.user_id}"
             if cache_key in st.session_state.vector_cache:
                 del st.session_state.vector_cache[cache_key]
@@ -160,8 +180,6 @@ class VectorStoreManager:
             print(f"Error adding documents: {e}")
             return False
     
-   
-
     def clear(self) -> bool:
         """Clear vector store"""
         try:
@@ -170,14 +188,9 @@ class VectorStoreManager:
                 return False
             
             try:
-                # Delete the collection
                 client.delete_collection(self.collection_name)
-            except Exception as e:
-                # If collection doesn't exist, that's fine
-                if "not found" in str(e).lower() or "NotFound" in str(e):
-                    return True
-                print(f"Error deleting collection: {e}")
-                return False
+            except:
+                pass  # Collection might not exist
             
             # Clear cache
             cache_key = f"store_{self.user_id}"
@@ -201,36 +214,20 @@ class VectorStoreManager:
             try:
                 client.get_collection(self.collection_name)
             except:
-                # Collection doesn't exist
-                return True
+                return True  # Collection doesn't exist
             
             # Delete using filter
-            if doc_type == 'pdf':
-                # For PDFs, match by filename in source
-                client.delete(
-                    collection_name=self.collection_name,
-                    points_selector=Filter(
-                        must=[
-                            FieldCondition(
-                                key="metadata.source",
-                                match=MatchValue(value=source)
-                            )
-                        ]
-                    )
+            client.delete(
+                collection_name=self.collection_name,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="metadata.source",
+                            match=MatchValue(value=source)
+                        )
+                    ]
                 )
-            else:
-                # For web, match by exact URL
-                client.delete(
-                    collection_name=self.collection_name,
-                    points_selector=Filter(
-                        must=[
-                            FieldCondition(
-                                key="metadata.source",
-                                match=MatchValue(value=source)
-                            )
-                        ]
-                    )
-                )
+            )
             
             # Clear cache
             cache_key = f"store_{self.user_id}"
