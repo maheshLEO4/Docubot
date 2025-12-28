@@ -1,29 +1,103 @@
 import requests
 from bs4 import BeautifulSoup
-from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from typing import List, Optional, Tuple
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import streamlit as st
 
-def scrape_webpage(url):
-    try:
-        response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Clean unnecessary tags
-        for script in soup(["script", "style", "nav", "footer", "header"]):
-            script.extract()
+class WebScraper:
+    """Optimized web scraper for cloud deployment"""
+    
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+        }
+    
+    def scrape_url(self, url: str) -> Optional[Tuple[str, str]]:
+        """Scrape single URL"""
+        try:
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.raise_for_status()
             
-        text = soup.get_text(separator=' ', strip=True)
-        return [Document(page_content=text, metadata={"source": url})]
-    except Exception as e:
-        return []
-
-def scrape_urls_to_chunks(urls):
-    all_docs = []
-    for url in urls:
-        all_docs.extend(scrape_webpage(url))
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Remove unwanted elements
+            for element in soup(['script', 'style', 'nav', 'header', 'footer']):
+                element.decompose()
+            
+            # Get title
+            title = soup.title.string if soup.title else url
+            
+            # Get content from common containers
+            content_selectors = ['main', 'article', '[role="main"]', '.content', '.main-content']
+            content = None
+            
+            for selector in content_selectors:
+                elements = soup.select(selector)
+                for element in elements:
+                    text = element.get_text(strip=True)
+                    if len(text) > 100:
+                        content = text
+                        break
+                if content:
+                    break
+            
+            # Fallback to body
+            if not content:
+                content = soup.body.get_text(strip=True) if soup.body else ''
+            
+            # Clean content
+            content = ' '.join(content.split())
+            
+            if len(content) < 50:
+                return None
+            
+            return content, title
+            
+        except Exception as e:
+            print(f"Error scraping {url}: {e}")
+            return None
     
-    if not all_docs: return None
+    def scrape_urls(self, urls: List[str]) -> List[Document]:
+        """Scrape multiple URLs"""
+        documents = []
+        successful_urls = []
+        
+        if not urls:
+            return documents
+        
+        with st.spinner(f"Scraping {len(urls)} website(s)..."):
+            for url in urls:
+                result = self.scrape_url(url.strip())
+                if result:
+                    content, title = result
+                    
+                    doc = Document(
+                        page_content=content,
+                        metadata={
+                            'source': url,
+                            'title': title,
+                            'type': 'web',
+                            'scraping_method': 'requests'
+                        }
+                    )
+                    documents.append(doc)
+                    successful_urls.append(url)
+        
+        return documents, successful_urls
     
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    return splitter.split_documents(all_docs)
+    def create_chunks(self, documents: List[Document]) -> List[Document]:
+        """Split documents into chunks"""
+        if not documents:
+            return []
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len
+        )
+        
+        return text_splitter.split_documents(documents)

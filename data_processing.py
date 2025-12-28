@@ -1,43 +1,72 @@
 import os
-import concurrent.futures
+import tempfile
+from typing import List, Tuple
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+import streamlit as st
 
-def get_user_data_path(user_id):
-    path = f"temp_uploads/user_{user_id}"
-    os.makedirs(path, exist_ok=True)
-    return path
-
-def save_uploaded_files(uploaded_files, user_id):
-    data_path = get_user_data_path(user_id)
-    file_paths = []
-    for file in uploaded_files:
-        file_path = os.path.join(data_path, file.name)
-        with open(file_path, "wb") as f:
-            f.write(file.getbuffer())
-        file_paths.append(file_path)
-    return file_paths
-
-def load_single_pdf(file_path):
-    try:
-        loader = PyPDFLoader(file_path)
-        return loader.load()
-    except Exception as e:
-        print(f"Error loading {file_path}: {e}")
-        return []
-
-def get_document_chunks(user_id, file_paths):
-    all_docs = []
-    # Fast Parallel Loading
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(load_single_pdf, file_paths))
+class DataProcessor:
+    """Optimized data processor for PDFs"""
     
-    for doc_list in results:
-        all_docs.extend(doc_list)
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.temp_dir = tempfile.mkdtemp(prefix=f"docubot_{user_id}_")
+    
+    def process_pdfs(self, uploaded_files) -> Tuple[List[Document], List[str]]:
+        """Process uploaded PDF files"""
+        if not uploaded_files:
+            return [], []
         
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, 
-        chunk_overlap=150,
-        separators=["\n\n", "\n", " ", ""]
-    )
-    return text_splitter.split_documents(all_docs)
+        documents = []
+        processed_files = []
+        
+        with st.spinner(f"Processing {len(uploaded_files)} PDF(s)..."):
+            for uploaded_file in uploaded_files:
+                try:
+                    # Save to temp file
+                    temp_path = os.path.join(self.temp_dir, uploaded_file.name)
+                    with open(temp_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    # Load PDF
+                    loader = PyPDFLoader(temp_path)
+                    pdf_docs = loader.load()
+                    
+                    # Add metadata
+                    for doc in pdf_docs:
+                        doc.metadata.update({
+                            'source': uploaded_file.name,
+                            'type': 'pdf',
+                            'user_id': self.user_id
+                        })
+                    
+                    documents.extend(pdf_docs)
+                    processed_files.append(uploaded_file.name)
+                    
+                except Exception as e:
+                    print(f"Error processing {uploaded_file.name}: {e}")
+                    continue
+        
+        if not documents:
+            return [], []
+        
+        # Split into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        
+        chunks = text_splitter.split_documents(documents)
+        return chunks, processed_files
+    
+    def cleanup(self):
+        """Clean up temporary files"""
+        try:
+            import shutil
+            if os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+        except:
+            pass
