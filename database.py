@@ -1,236 +1,210 @@
-from pymongo import MongoClient, ASCENDING, DESCENDING
+import os
+from pymongo import MongoClient
 from datetime import datetime
 import uuid
-from typing import Optional, List, Dict, Any
-from config import config
+from config import get_mongodb_uri
 
 class MongoDBManager:
-    """Optimized MongoDB manager with connection pooling"""
-    
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
     def __init__(self):
-        if not self._initialized:
-            self.client = None
-            self.db = None
-            self._initialized = True
+        self.client = None
+        self.db = None
+        self.users = None
+        self.file_uploads = None
+        self.web_scrapes = None
+        self.query_logs = None
+        self.connect()
     
-    def _connect(self):
-        """Connect to MongoDB with error handling"""
+    def connect(self):
+        """Connect to MongoDB and initialize collections"""
         try:
-            mongodb_uri = config.get_mongodb_uri()
-            if not mongodb_uri:
-                print("❌ MongoDB URI not configured")
-                return False
-            
-            self.client = MongoClient(
-                mongodb_uri,
-                maxPoolSize=10,
-                minPoolSize=1,
-                connectTimeoutMS=5000,
-                serverSelectionTimeoutMS=5000
-            )
+            mongodb_uri = get_mongodb_uri()
+            self.client = MongoClient(mongodb_uri)
             self.db = self.client.docubot
             
-            # Test connection
-            self.client.admin.command('ping')
-            print("✅ MongoDB connected")
-            return True
+            # Initialize collections
+            self.users = self.db.users
+            self.file_uploads = self.db.file_uploads
+            self.web_scrapes = self.db.web_scrapes
+            self.query_logs = self.db.query_logs
             
+            print("✅ Connected to MongoDB")
         except Exception as e:
             print(f"❌ MongoDB connection failed: {e}")
-            self.client = None
-            self.db = None
-            return False
+            raise
     
-    def _ensure_connection(self):
-        """Ensure database connection exists"""
-        if not self.client:
-            return self._connect()
-        try:
-            # Test if connection is still alive
-            self.client.admin.command('ping')
-            return True
-        except:
-            return self._connect()
+    def get_current_time(self):
+        """Get current UTC time"""
+        return datetime.utcnow()
     
-    def create_user(self, user_data: Dict) -> bool:
-        """Create new user"""
+    def init_user(self, user_data):
+        """Initialize user record (for backward compatibility)"""
         try:
-            if not self._ensure_connection():
-                return False
+            user_record = {
+                'user_id': user_data['user_id'],
+                'email': user_data['email'],
+                'name': user_data.get('name', ''),
+                'created_at': self.get_current_time(),
+                'last_login': self.get_current_time(),
+                'is_active': True
+            }
             
-            self.db.users.insert_one(user_data)
-            return True
+            result = self.users.update_one(
+                {'user_id': user_data['user_id']},
+                {'$set': user_record},
+                upsert=True
+            )
+            return user_record
         except Exception as e:
-            print(f"Error creating user: {e}")
-            return False
+            print(f"Error initializing user: {e}")
+            return user_data
     
-    def get_user_by_email(self, email: str) -> Optional[Dict]:
+    def get_user_by_email(self, email):
         """Get user by email"""
         try:
-            if not self._ensure_connection():
-                return None
-            
-            return self.db.users.find_one({'email': email.lower().strip()})
+            return self.users.find_one({'email': email})
         except Exception as e:
             print(f"Error getting user by email: {e}")
             return None
     
-    def update_user_last_login(self, user_id: str):
+    def update_last_login(self, user_id):
         """Update user's last login timestamp"""
         try:
-            if not self._ensure_connection():
-                return
-            
-            self.db.users.update_one(
+            self.users.update_one(
                 {'user_id': user_id},
-                {'$set': {'last_login': datetime.utcnow()}}
+                {'$set': {'last_login': self.get_current_time()}}
             )
         except Exception as e:
             print(f"Error updating last login: {e}")
     
-    def log_file_upload(self, user_id: str, filename: str, pages: int) -> str:
-        """Log file upload"""
+    def log_file_upload(self, user_id, filename, file_size, pages_processed):
+        """Log PDF file upload"""
         try:
-            if not self._ensure_connection():
-                return str(uuid.uuid4())
-            
             upload_id = str(uuid.uuid4())
-            record = {
+            upload_record = {
                 'upload_id': upload_id,
                 'user_id': user_id,
                 'filename': filename,
-                'pages_processed': pages,
-                'uploaded_at': datetime.utcnow(),
+                'file_size': file_size,
+                'pages_processed': pages_processed,
+                'uploaded_at': self.get_current_time(),
                 'status': 'processed'
             }
-            self.db.file_uploads.insert_one(record)
+            
+            self.file_uploads.insert_one(upload_record)
             return upload_id
         except Exception as e:
             print(f"Error logging file upload: {e}")
             return str(uuid.uuid4())
     
-    def log_web_scrape(self, user_id: str, urls: List[str], successful: List[str]) -> str:
-        """Log web scrape"""
+    def delete_file_upload(self, upload_id):
+        """Delete file upload record"""
         try:
-            if not self._ensure_connection():
-                return str(uuid.uuid4())
-            
+            self.file_uploads.delete_one({'upload_id': upload_id})
+            return True
+        except Exception as e:
+            print(f"Error deleting file upload: {e}")
+            return False
+    
+    def log_web_scrape(self, user_id, urls, successful_urls, total_chunks):
+        """Log web scraping activity"""
+        try:
             scrape_id = str(uuid.uuid4())
-            record = {
+            scrape_record = {
                 'scrape_id': scrape_id,
                 'user_id': user_id,
                 'urls': urls,
-                'successful_urls': successful,
-                'scraped_at': datetime.utcnow(),
+                'successful_urls': successful_urls,
+                'total_chunks': total_chunks,
+                'scraped_at': self.get_current_time(),
                 'status': 'completed'
             }
-            self.db.web_scrapes.insert_one(record)
+            
+            self.web_scrapes.insert_one(scrape_record)
             return scrape_id
         except Exception as e:
             print(f"Error logging web scrape: {e}")
             return str(uuid.uuid4())
     
-    def get_user_files(self, user_id: str) -> List[Dict]:
-        """Get user's uploaded files"""
+    def delete_web_scrape(self, scrape_id):
+        """Delete web scrape record"""
         try:
-            if not self._ensure_connection():
-                return []
-            
-            return list(self.db.file_uploads.find(
-                {'user_id': user_id},
-                sort=[('uploaded_at', DESCENDING)]
-            ))
+            self.web_scrapes.delete_one({'scrape_id': scrape_id})
+            return True
         except Exception as e:
-            print(f"Error getting user files: {e}")
-            return []
-    
-    def get_user_scrapes(self, user_id: str) -> List[Dict]:
-        """Get user's web scrapes"""
-        try:
-            if not self._ensure_connection():
-                return []
-            
-            return list(self.db.web_scrapes.find(
-                {'user_id': user_id},
-                sort=[('scraped_at', DESCENDING)]
-            ))
-        except Exception as e:
-            print(f"Error getting user scrapes: {e}")
-            return []
-    
-    def delete_file(self, upload_id: str) -> bool:
-        """Delete file record"""
-        try:
-            if not self._ensure_connection():
-                return False
-            
-            result = self.db.file_uploads.delete_one({'upload_id': upload_id})
-            return result.deleted_count > 0
-        except Exception as e:
-            print(f"Error deleting file: {e}")
+            print(f"Error deleting web scrape: {e}")
             return False
     
-    def clear_user_data(self, user_id: str) -> bool:
-        """Clear all user data"""
+    def clear_user_data(self, user_id):
+        """Clear all user data from MongoDB"""
         try:
-            if not self._ensure_connection():
-                return False
-            
-            self.db.file_uploads.delete_many({'user_id': user_id})
-            self.db.web_scrapes.delete_many({'user_id': user_id})
-            self.db.query_logs.delete_many({'user_id': user_id})
+            self.file_uploads.delete_many({'user_id': user_id})
+            self.web_scrapes.delete_many({'user_id': user_id})
             return True
         except Exception as e:
             print(f"Error clearing user data: {e}")
             return False
     
-    def get_user_stats(self, user_id: str) -> Dict[str, int]:
-        """Get user statistics"""
+    def log_query(self, user_id, query, response, sources_used, processing_time):
+        """Log user queries for analytics"""
         try:
-            if not self._ensure_connection():
-                return {'files_uploaded': 0, 'websites_scraped': 0, 'queries_made': 0}
-            
-            files = self.db.file_uploads.count_documents({'user_id': user_id})
-            scrapes = self.db.web_scrapes.count_documents({'user_id': user_id})
-            queries = self.db.query_logs.count_documents({'user_id': user_id})
-            
-            return {
-                'files_uploaded': files,
-                'websites_scraped': scrapes,
-                'queries_made': queries
-            }
-        except Exception as e:
-            print(f"Error getting user stats: {e}")
-            return {'files_uploaded': 0, 'websites_scraped': 0, 'queries_made': 0}
-    
-    def log_query(self, user_id: str, query: str, answer: str, sources: List[Dict]) -> str:
-        """Log user query"""
-        try:
-            if not self._ensure_connection():
-                return str(uuid.uuid4())
-            
             query_id = str(uuid.uuid4())
-            record = {
+            query_record = {
                 'query_id': query_id,
                 'user_id': user_id,
                 'query': query,
-                'answer_preview': answer[:200],
-                'sources_count': len(sources),
-                'queried_at': datetime.utcnow()
+                'response_preview': response[:200] if response else '',
+                'sources_count': len(sources_used),
+                'processing_time': processing_time,
+                'queried_at': self.get_current_time()
             }
-            self.db.query_logs.insert_one(record)
+            
+            self.query_logs.insert_one(query_record)
             return query_id
         except Exception as e:
             print(f"Error logging query: {e}")
             return str(uuid.uuid4())
+    
+    def get_user_files(self, user_id):
+        """Get all files uploaded by user"""
+        try:
+            return list(self.file_uploads.find(
+                {'user_id': user_id},
+                sort=[('uploaded_at', -1)]
+            ))
+        except Exception as e:
+            print(f"Error getting user files: {e}")
+            return []
+    
+    def get_user_scrapes(self, user_id):
+        """Get all web scrapes by user"""
+        try:
+            return list(self.web_scrapes.find(
+                {'user_id': user_id},
+                sort=[('scraped_at', -1)]
+            ))
+        except Exception as e:
+            print(f"Error getting user scrapes: {e}")
+            return []
+    
+    def get_user_stats(self, user_id):
+        """Get user statistics"""
+        try:
+            files_count = self.file_uploads.count_documents({'user_id': user_id})
+            scrapes_count = self.web_scrapes.count_documents({'user_id': user_id})
+            queries_count = self.query_logs.count_documents({'user_id': user_id})
+            
+            return {
+                'files_uploaded': files_count,
+                'websites_scraped': scrapes_count,
+                'queries_made': queries_count
+            }
+        except Exception as e:
+            print(f"Error getting user stats: {e}")
+            return {
+                'files_uploaded': 0,
+                'websites_scraped': 0,
+                'queries_made': 0
+            }
     
     def close(self):
         """Close MongoDB connection"""

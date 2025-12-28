@@ -1,80 +1,97 @@
 import os
-import tempfile
-from typing import List, Tuple
-import streamlit as st
+import concurrent.futures
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-class DataProcessor:
-    """Optimized data processor for PDFs"""
+# Remove AuthManager import from here - we'll pass user_id as parameter
+
+def get_user_data_path(user_id):
+    """Get user-specific temporary data path"""
+    if not user_id:
+        return None
+    temp_path = f"temp_uploads/user_{user_id}"
+    os.makedirs(temp_path, exist_ok=True)
+    return temp_path
+
+def save_uploaded_files(uploaded_files, user_id):
+    """Save uploaded files to temporary storage and return file paths"""
+    data_path = get_user_data_path(user_id)
+    if not data_path:
+        raise ValueError("User not authenticated")
     
-    def __init__(self, user_id: str):
-        self.user_id = user_id
-        self.temp_dir = tempfile.mkdtemp(prefix=f"docubot_{user_id}_")
+    file_paths = []
+    for file in uploaded_files:
+        file_path = os.path.join(data_path, file.name)
+        with open(file_path, "wb") as f:
+            f.write(file.getbuffer())
+        file_paths.append(file_path)
     
-    def process_pdfs(self, uploaded_files) -> Tuple[List, List[str]]:
-        """Process uploaded PDF files"""
-        if not uploaded_files:
-            return [], []
-        
-        documents = []
-        processed_files = []
-        
-        with st.spinner(f"Processing {len(uploaded_files)} PDF(s)..."):
-            for uploaded_file in uploaded_files:
-                try:
-                    print(f"📄 Processing: {uploaded_file.name}")
-                    
-                    # Save to temp file
-                    temp_path = os.path.join(self.temp_dir, uploaded_file.name)
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
-                    # Load PDF using PyPDFLoader
-                    from langchain_community.document_loaders import PyPDFLoader
-                    loader = PyPDFLoader(temp_path)
-                    pdf_docs = loader.load()
-                    
-                    print(f"  Loaded {len(pdf_docs)} pages from {uploaded_file.name}")
-                    
-                    # Add metadata
-                    for doc in pdf_docs:
-                        doc.metadata.update({
-                            'source': uploaded_file.name,
-                            'type': 'pdf',
-                            'user_id': self.user_id
-                        })
-                    
-                    documents.extend(pdf_docs)
-                    processed_files.append(uploaded_file.name)
-                    
-                except Exception as e:
-                    st.error(f"Error processing {uploaded_file.name}: {e}")
-                    print(f"❌ Error processing {uploaded_file.name}: {e}")
-                    continue
-        
-        if not documents:
-            st.warning("No content extracted from PDFs")
-            return [], []
-        
-        # Split into chunks
-        print(f"✂️ Splitting {len(documents)} documents into chunks...")
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]
-        )
-        
-        chunks = text_splitter.split_documents(documents)
-        print(f"✅ Created {len(chunks)} chunks")
-        
-        return chunks, processed_files
-    
-    def cleanup(self):
-        """Clean up temporary files"""
+    return file_paths
+
+def get_existing_pdf_files(user_id):
+    """Get list of existing PDF files in user's data directory."""
+    data_path = get_user_data_path(user_id)
+    if not data_path or not os.path.exists(data_path):
+        return []
+    return [f for f in os.listdir(data_path) if f.endswith('.pdf')]
+
+def load_pdf_files(file_paths):
+    """Load PDF files"""
+    def load_single_pdf(file_path):
         try:
-            import shutil
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
-        except:
-            pass
+            loader = PyPDFLoader(file_path)
+            documents = loader.load()
+            # Add file source to metadata
+            for doc in documents:
+                doc.metadata['source'] = file_path
+                doc.metadata['type'] = 'pdf'
+            return documents
+        except Exception as e:
+            print(f"Warning: Error loading {os.path.basename(file_path)}: {str(e)}")
+            return []
+    
+    # Use thread pool for parallel loading
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(file_paths))) as executor:
+        results = list(executor.map(load_single_pdf, file_paths))
+    
+    # Flatten results
+    documents = []
+    for doc_list in results:
+        documents.extend(doc_list)
+    
+    return documents
+
+def split_documents_into_chunks(documents):
+    """Split documents into chunks"""
+    print("✂️ Splitting documents into chunks...")
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", "! ", "? "]
+    )
+    chunks = text_splitter.split_documents(documents)
+    print(f"✅ Created {len(chunks)} chunks from {len(documents)} documents")
+    return chunks
+
+def get_document_chunks(user_id, file_paths=None):
+    """Main function to load PDFs and return chunks"""
+    if not file_paths:
+        data_path = get_user_data_path(user_id)
+        if not data_path or not os.path.exists(data_path):
+            return None, []
+        file_paths = [os.path.join(data_path, f) for f in os.listdir(data_path) if f.endswith('.pdf')]
+    
+    if not file_paths:
+        print("❌ No PDF files found to process.")
+        return None, []
+    
+    print(f"📄 Found {len(file_paths)} PDF file(s) to process...")
+    documents = load_pdf_files(file_paths)
+    
+    if not documents:
+        print("❌ No documents could be loaded from PDF files.")
+        return None, []
+    
+    chunks = split_documents_into_chunks(documents)
+    return chunks, file_paths
