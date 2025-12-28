@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 vectorstore/
 .DS_Store
+test_config.py
