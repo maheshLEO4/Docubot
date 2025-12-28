@@ -1,6 +1,6 @@
 import streamlit as st
 from config import config
-from auth import render_auth_ui, AuthManager
+from auth import render_auth_ui
 from database import MongoDBManager
 from vector_store import VectorStoreManager
 from query_processor import QueryProcessor
@@ -270,7 +270,14 @@ def process_website_urls(urls_list, user_id, append=True):
                 st.error("No content scraped from websites")
                 return
             
-            chunks = scraper.create_chunks(documents)
+            # Split into chunks
+            from langchain.text_splitter import RecursiveCharacterTextSplitter
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len
+            )
+            chunks = text_splitter.split_documents(documents)
             
             # Add to vector store
             vector_store = VectorStoreManager(user_id)

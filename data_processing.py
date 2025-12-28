@@ -3,7 +3,6 @@ import tempfile
 from typing import List, Tuple
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
 import streamlit as st
 
 class DataProcessor:
@@ -13,7 +12,7 @@ class DataProcessor:
         self.user_id = user_id
         self.temp_dir = tempfile.mkdtemp(prefix=f"docubot_{user_id}_")
     
-    def process_pdfs(self, uploaded_files) -> Tuple[List[Document], List[str]]:
+    def process_pdfs(self, uploaded_files) -> Tuple[List, List[str]]:
         """Process uploaded PDF files"""
         if not uploaded_files:
             return [], []

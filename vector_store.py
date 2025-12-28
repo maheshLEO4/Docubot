@@ -1,12 +1,11 @@
 import os
-from typing import Optional, List, Tuple
+from typing import Optional, List
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import Distance, VectorParams
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Qdrant
 import streamlit as st
 from config import config
-from database import MongoDBManager
 
 class VectorStoreManager:
     """Optimized vector store manager with caching"""
@@ -14,7 +13,6 @@ class VectorStoreManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self.collection_name = f"docubot_{user_id}"
-        self.db_manager = MongoDBManager()
         self._init_cache()
     
     def _init_cache(self):
@@ -35,6 +33,9 @@ class VectorStoreManager:
     def _get_qdrant_client(_self):
         """Cached Qdrant client"""
         qdrant_config = config.get_qdrant_config()
+        if not qdrant_config['api_key'] or not qdrant_config['url']:
+            raise ValueError("Qdrant configuration missing")
+        
         return QdrantClient(
             url=qdrant_config['url'],
             api_key=qdrant_config['api_key'],

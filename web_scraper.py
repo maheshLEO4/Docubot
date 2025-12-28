@@ -1,8 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Optional, Tuple
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 import streamlit as st
 
 class WebScraper:
@@ -13,7 +11,6 @@ class WebScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
         }
     
     def scrape_url(self, url: str) -> Optional[Tuple[str, str]]:
@@ -61,43 +58,26 @@ class WebScraper:
             print(f"Error scraping {url}: {e}")
             return None
     
-    def scrape_urls(self, urls: List[str]) -> List[Document]:
+    def scrape_urls(self, urls: List[str]) -> Tuple[List, List[str]]:
         """Scrape multiple URLs"""
         documents = []
         successful_urls = []
         
         if not urls:
-            return documents
+            return documents, successful_urls
         
-        with st.spinner(f"Scraping {len(urls)} website(s)..."):
-            for url in urls:
-                result = self.scrape_url(url.strip())
-                if result:
-                    content, title = result
-                    
-                    doc = Document(
-                        page_content=content,
-                        metadata={
-                            'source': url,
-                            'title': title,
-                            'type': 'web',
-                            'scraping_method': 'requests'
-                        }
-                    )
-                    documents.append(doc)
-                    successful_urls.append(url)
+        for url in urls:
+            result = self.scrape_url(url.strip())
+            if result:
+                content, title = result
+                documents.append({
+                    'page_content': content,
+                    'metadata': {
+                        'source': url,
+                        'title': title,
+                        'type': 'web'
+                    }
+                })
+                successful_urls.append(url)
         
         return documents, successful_urls
-    
-    def create_chunks(self, documents: List[Document]) -> List[Document]:
-        """Split documents into chunks"""
-        if not documents:
-            return []
-        
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len
-        )
-        
-        return text_splitter.split_documents(documents)

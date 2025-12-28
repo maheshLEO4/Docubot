@@ -1,9 +1,8 @@
 import streamlit as st
-from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-from langchain.chains import RetrievalQA
 from vector_store import VectorStoreManager
 from config import config
+import os
 
 class QueryProcessor:
     """Optimized query processor with caching"""
@@ -36,6 +35,7 @@ class QueryProcessor:
             )
             
             # Efficient prompt template
+            from langchain_core.prompts import PromptTemplate
             prompt_template = """Use the following context to answer the question. 
             If you don't know the answer, say you don't know. Keep answers concise.
             
@@ -58,7 +58,8 @@ class QueryProcessor:
                 groq_api_key=api_key
             )
             
-            # Create QA chain
+            # Create QA chain (updated for latest LangChain)
+            from langchain.chains import RetrievalQA
             qa_chain = RetrievalQA.from_chain_type(
                 llm=llm,
                 chain_type="stuff",
