@@ -1,8 +1,6 @@
 import os
 import tempfile
 from typing import List, Tuple
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import streamlit as st
 
 class DataProcessor:
@@ -23,14 +21,19 @@ class DataProcessor:
         with st.spinner(f"Processing {len(uploaded_files)} PDF(s)..."):
             for uploaded_file in uploaded_files:
                 try:
+                    print(f"📄 Processing: {uploaded_file.name}")
+                    
                     # Save to temp file
                     temp_path = os.path.join(self.temp_dir, uploaded_file.name)
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     
-                    # Load PDF
+                    # Load PDF using PyPDFLoader
+                    from langchain_community.document_loaders import PyPDFLoader
                     loader = PyPDFLoader(temp_path)
                     pdf_docs = loader.load()
+                    
+                    print(f"  Loaded {len(pdf_docs)} pages from {uploaded_file.name}")
                     
                     # Add metadata
                     for doc in pdf_docs:
@@ -44,13 +47,17 @@ class DataProcessor:
                     processed_files.append(uploaded_file.name)
                     
                 except Exception as e:
-                    print(f"Error processing {uploaded_file.name}: {e}")
+                    st.error(f"Error processing {uploaded_file.name}: {e}")
+                    print(f"❌ Error processing {uploaded_file.name}: {e}")
                     continue
         
         if not documents:
+            st.warning("No content extracted from PDFs")
             return [], []
         
         # Split into chunks
+        print(f"✂️ Splitting {len(documents)} documents into chunks...")
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
@@ -59,6 +66,8 @@ class DataProcessor:
         )
         
         chunks = text_splitter.split_documents(documents)
+        print(f"✅ Created {len(chunks)} chunks")
+        
         return chunks, processed_files
     
     def cleanup(self):

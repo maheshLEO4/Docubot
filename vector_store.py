@@ -30,7 +30,7 @@ class VectorStoreManager:
                 encode_kwargs={'normalize_embeddings': True}
             )
         except Exception as e:
-            print(f"Error loading embedding model: {e}")
+            st.error(f"Error loading embedding model: {e}")
             return None
     
     @st.cache_resource(ttl=300)
@@ -38,11 +38,14 @@ class VectorStoreManager:
         """Cached Qdrant client"""
         try:
             qdrant_config = config.get_qdrant_config()
-            if not qdrant_config['api_key'] or not qdrant_config['url']:
-                print("Qdrant configuration missing. Check your API keys.")
+            if not qdrant_config['api_key']:
+                st.error("❌ QDRANT_API_KEY missing")
+                return None
+            if not qdrant_config['url']:
+                st.error("❌ QDRANT_URL missing")
                 return None
             
-            # Create client with check_compatibility=False to suppress warning
+            # Create client
             client = QdrantClient(
                 url=qdrant_config['url'],
                 api_key=qdrant_config['api_key'],
@@ -50,16 +53,17 @@ class VectorStoreManager:
                 check_compatibility=False
             )
             
-            # Simple connection test
+            # Test connection
             try:
-                client.get_collections()
+                collections = client.get_collections()
+                print(f"✅ Qdrant connected. Collections: {[c.name for c in collections.collections]}")
                 return client
             except Exception as e:
-                print(f"Qdrant connection test failed: {e}")
+                st.error(f"❌ Qdrant connection test failed: {e}")
                 return None
                 
         except Exception as e:
-            print(f"Error creating Qdrant client: {e}")
+            st.error(f"❌ Error creating Qdrant client: {e}")
             return None
     
     def get_store(self) -> Optional[Qdrant]:
@@ -72,16 +76,20 @@ class VectorStoreManager:
         try:
             client = self._get_qdrant_client()
             if not client:
+                st.error("❌ Qdrant client not available")
                 return None
             
             embeddings = self._get_embedding_model()
             if not embeddings:
+                st.error("❌ Embedding model not available")
                 return None
             
             # Create collection if it doesn't exist
             try:
-                client.get_collection(self.collection_name)
-            except Exception:
+                collection_info = client.get_collection(self.collection_name)
+                print(f"✅ Collection exists: {self.collection_name}, points: {collection_info.points_count}")
+            except Exception as e:
+                print(f"Creating new collection: {self.collection_name}")
                 client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE)
@@ -98,7 +106,7 @@ class VectorStoreManager:
             return store
             
         except Exception as e:
-            print(f"Error getting vector store: {e}")
+            st.error(f"❌ Error getting vector store: {e}")
             return None
     
     def exists(self) -> bool:
@@ -109,46 +117,50 @@ class VectorStoreManager:
                 return False
             
             try:
-                # Try to get collection info
                 collection_info = client.get_collection(self.collection_name)
                 return collection_info.points_count > 0
             except Exception as e:
-                # Collection doesn't exist
-                if "not found" in str(e).lower() or "NotFound" in str(e):
-                    return False
-                # Other error - log it but return False
-                print(f"Error getting collection info: {e}")
                 return False
                 
         except Exception as e:
-            print(f"Error checking vector store existence: {e}")
             return False
     
     def add_documents(self, documents: List, doc_type: str = "pdf") -> bool:
         """Add documents to vector store"""
         try:
             if not documents:
+                st.warning("No documents to add")
                 return False
+            
+            print(f"📚 Adding {len(documents)} documents to vector store...")
             
             store = self.get_store()
             if not store:
-                print("Vector store not available")
+                st.error("Vector store not available")
                 return False
             
-            # Add documents
-            store.add_documents(documents)
-            
-            # Clear cache to force refresh
-            cache_key = f"store_{self.user_id}"
-            if cache_key in st.session_state.vector_cache:
-                del st.session_state.vector_cache[cache_key]
-            
-            return True
+            # Add documents with progress
+            from langchain_core.documents import Document
+            if documents and isinstance(documents[0], Document):
+                store.add_documents(documents)
+                print(f"✅ Added {len(documents)} documents successfully")
+                
+                # Clear cache
+                cache_key = f"store_{self.user_id}"
+                if cache_key in st.session_state.vector_cache:
+                    del st.session_state.vector_cache[cache_key]
+                
+                return True
+            else:
+                st.error("Invalid document format")
+                return False
             
         except Exception as e:
-            print(f"Error adding documents: {e}")
+            st.error(f"❌ Error adding documents: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-    
+
     def clear(self) -> bool:
         """Clear vector store"""
         try:

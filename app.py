@@ -237,16 +237,21 @@ def process_pdfs_files(uploaded_files, user_id, append=True):
             chunks, processed_files = processor.process_pdfs(uploaded_files)
             
             if not chunks:
-                st.error("No content extracted from PDFs")
+                st.error("No content extracted from PDFs. Please ensure PDFs contain text (not scanned images).")
                 return
+            
+            print(f"📊 Ready to add {len(chunks)} chunks to vector store")
             
             # Add to vector store
             vector_store = VectorStoreManager(user_id)
+            
             if not append:
+                print("🧹 Clearing existing data...")
                 clear_success = vector_store.clear()
                 if not clear_success:
                     st.warning("Could not clear existing data, but will try to add new documents")
             
+            print(f"📤 Adding documents to vector store...")
             success = vector_store.add_documents(chunks, 'pdf')
             
             if success:
@@ -259,15 +264,17 @@ def process_pdfs_files(uploaded_files, user_id, append=True):
                 st.session_state.cached_user_files = db.get_user_files(user_id)
                 st.session_state.vector_store_exists = True
                 
-                st.success(f"Added {len(processed_files)} PDF(s) to knowledge base")
+                st.success(f"✅ Added {len(processed_files)} PDF(s) with {len(chunks)} chunks to knowledge base")
                 processor.cleanup()
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error("Failed to add PDFs to knowledge base")
+                st.error("❌ Failed to add PDFs to knowledge base. Check Qdrant connection and API keys.")
                 
         except Exception as e:
-            st.error(f"Error processing PDFs: {str(e)}")
+            st.error(f"❌ Error processing PDFs: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
 def process_website_urls(urls_list, user_id, append=True):
     """Process website URLs"""
