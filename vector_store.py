@@ -1,9 +1,7 @@
-# Fix the imports and connection logic:
-
 import os
 from typing import Optional, List
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Qdrant
 import streamlit as st
@@ -41,7 +39,7 @@ class VectorStoreManager:
         try:
             qdrant_config = config.get_qdrant_config()
             if not qdrant_config['api_key'] or not qdrant_config['url']:
-                st.error("Qdrant configuration missing. Check your API keys.")
+                print("Qdrant configuration missing. Check your API keys.")
                 return None
             
             client = QdrantClient(
@@ -56,7 +54,6 @@ class VectorStoreManager:
             
         except Exception as e:
             print(f"Error connecting to Qdrant: {e}")
-            st.error(f"Failed to connect to Qdrant: {e}")
             return None
     
     def get_store(self) -> Optional[Qdrant]:
@@ -96,8 +93,29 @@ class VectorStoreManager:
             
         except Exception as e:
             print(f"Error getting vector store: {e}")
-            st.error(f"Failed to initialize vector store: {e}")
             return None
+    
+    def exists(self) -> bool:
+        """Check if vector store exists and has data"""
+        try:
+            client = self._get_qdrant_client()
+            if not client:
+                return False
+            
+            # Check if collection exists
+            collections = client.get_collections()
+            collection_names = [col.name for col in collections.collections]
+            
+            if self.collection_name not in collection_names:
+                return False
+            
+            # Check if collection has data
+            collection_info = client.get_collection(self.collection_name)
+            return collection_info.points_count > 0
+            
+        except Exception as e:
+            print(f"Error checking vector store existence: {e}")
+            return False
     
     def add_documents(self, documents: List, doc_type: str = "pdf") -> bool:
         """Add documents to vector store"""
@@ -107,7 +125,7 @@ class VectorStoreManager:
             
             store = self.get_store()
             if not store:
-                st.error("Vector store not available")
+                print("Vector store not available")
                 return False
             
             # Add documents
@@ -122,5 +140,81 @@ class VectorStoreManager:
             
         except Exception as e:
             print(f"Error adding documents: {e}")
-            st.error(f"Failed to add documents: {e}")
+            return False
+    
+    def clear(self) -> bool:
+        """Clear vector store"""
+        try:
+            client = self._get_qdrant_client()
+            if not client:
+                return False
+            
+            # Delete the collection
+            client.delete_collection(self.collection_name)
+            
+            # Clear cache
+            cache_key = f"store_{self.user_id}"
+            if cache_key in st.session_state.vector_cache:
+                del st.session_state.vector_cache[cache_key]
+            
+            return True
+            
+        except Exception as e:
+            # If collection doesn't exist, that's fine
+            if "not found" in str(e).lower():
+                return True
+            print(f"Error clearing vector store: {e}")
+            return False
+    
+    def remove_document(self, source: str, doc_type: str) -> bool:
+        """Remove specific document from store"""
+        try:
+            client = self._get_qdrant_client()
+            if not client:
+                return False
+            
+            # Try to get collection
+            try:
+                client.get_collection(self.collection_name)
+            except:
+                # Collection doesn't exist
+                return True
+            
+            # Delete using filter
+            if doc_type == 'pdf':
+                # For PDFs, match by filename in source
+                client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=Filter(
+                        must=[
+                            FieldCondition(
+                                key="metadata.source",
+                                match=MatchValue(value=source)
+                            )
+                        ]
+                    )
+                )
+            else:
+                # For web, match by exact URL
+                client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=Filter(
+                        must=[
+                            FieldCondition(
+                                key="metadata.source",
+                                match=MatchValue(value=source)
+                            )
+                        ]
+                    )
+                )
+            
+            # Clear cache
+            cache_key = f"store_{self.user_id}"
+            if cache_key in st.session_state.vector_cache:
+                del st.session_state.vector_cache[cache_key]
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error removing document: {e}")
             return False
