@@ -234,7 +234,9 @@ def process_pdfs_files(uploaded_files, user_id, append=True):
             # Add to vector store
             vector_store = VectorStoreManager(user_id)
             if not append:
-                vector_store.clear()
+                clear_success = vector_store.clear()
+                if not clear_success:
+                    st.warning("Could not clear existing data, but will try to add new documents")
             
             success = vector_store.add_documents(chunks, 'pdf')
             
