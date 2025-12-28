@@ -1,6 +1,7 @@
 import streamlit as st
 from langchain_community.vectorstores import Qdrant
 from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from qdrant_client import QdrantClient
 from config import get_config
 from data_processing import get_document_chunks

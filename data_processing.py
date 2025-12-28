@@ -1,7 +1,7 @@
 import os
 import concurrent.futures
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def get_user_data_path(user_id):
     path = f"temp_uploads/user_{user_id}"
