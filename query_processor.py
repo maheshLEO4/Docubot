@@ -14,9 +14,6 @@ def get_cached_qa_chain(groq_api_key, user_id):
             return None
         
 
-        CUSTOM_PROMPT=" give answer to the user queries "
-        
-
         # Simple, effective prompt (like MediBot)
         CUSTOM_PROMPT_TEMPLATE = """
                 Use the pieces of information provided in the context to answer user's question.
@@ -30,7 +27,7 @@ def get_cached_qa_chain(groq_api_key, user_id):
                 """
         
         prompt = PromptTemplate(
-            template=CUSTOM_PROMPT, 
+            template=CUSTOM_PROMPT_TEMPLATE, 
             input_variables=["context", "question"]
         )
 
