@@ -1,5 +1,5 @@
 from langchain_groq import ChatGroq
-from langchain.chains.retrieval_qa.base import RetrievalQA
+from langchain_classic.chains.retrieval_qa.base import RetrievalQA
 from vector_store import get_vector_store
 from config import get_config
 
