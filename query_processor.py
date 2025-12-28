@@ -12,6 +12,10 @@ def get_cached_qa_chain(groq_api_key, user_id):
         db = get_vector_store(user_id)
         if db is None:
             return None
+        
+
+        CUSTOM_PROMPT=" give answer to the user queries "
+        
 
         # Simple, effective prompt (like MediBot)
         CUSTOM_PROMPT_TEMPLATE = """
@@ -26,7 +30,7 @@ def get_cached_qa_chain(groq_api_key, user_id):
                 """
         
         prompt = PromptTemplate(
-            template=CUSTOM_PROMPT_TEMPLATE, 
+            template=CUSTOM_PROMPT, 
             input_variables=["context", "question"]
         )
 
