@@ -90,9 +90,18 @@ def render_sidebar(user_id):
     with st.sidebar:
         st.title("⚙️ Controls")
         
-        # Knowledge Base Status
-        vector_store = VectorStoreManager(user_id)
-        st.session_state.vector_store_exists = vector_store.exists()
+        # Initialize vector store safely
+        try:
+            vector_store = VectorStoreManager(user_id)
+            # Use safer method to check existence
+            try:
+                st.session_state.vector_store_exists = vector_store.exists()
+            except Exception as e:
+                print(f"Error checking vector store: {e}")
+                st.session_state.vector_store_exists = False
+        except Exception as e:
+            print(f"Error creating vector store manager: {e}")
+            st.session_state.vector_store_exists = False
         
         if st.session_state.vector_store_exists:
             st.success("✅ Knowledge Base Active")

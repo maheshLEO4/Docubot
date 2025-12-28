@@ -19,14 +19,16 @@ class MongoDBManager:
         if not self._initialized:
             self.client = None
             self.db = None
-            self._connect()
-            self._create_indexes()
             self._initialized = True
     
     def _connect(self):
         """Connect to MongoDB with error handling"""
         try:
             mongodb_uri = config.get_mongodb_uri()
+            if not mongodb_uri:
+                print("❌ MongoDB URI not configured")
+                return False
+            
             self.client = MongoClient(
                 mongodb_uri,
                 maxPoolSize=10,
@@ -39,33 +41,31 @@ class MongoDBManager:
             # Test connection
             self.client.admin.command('ping')
             print("✅ MongoDB connected")
+            return True
             
         except Exception as e:
             print(f"❌ MongoDB connection failed: {e}")
-            raise
+            self.client = None
+            self.db = None
+            return False
     
-    def _create_indexes(self):
-        """Create necessary indexes"""
+    def _ensure_connection(self):
+        """Ensure database connection exists"""
+        if not self.client:
+            return self._connect()
         try:
-            # Users collection
-            self.db.users.create_index([('email', ASCENDING)], unique=True)
-            self.db.users.create_index([('user_id', ASCENDING)], unique=True)
-            
-            # File uploads
-            self.db.file_uploads.create_index([('user_id', ASCENDING), ('uploaded_at', DESCENDING)])
-            
-            # Web scrapes
-            self.db.web_scrapes.create_index([('user_id', ASCENDING), ('scraped_at', DESCENDING)])
-            
-            # Query logs
-            self.db.query_logs.create_index([('user_id', ASCENDING), ('queried_at', DESCENDING)])
-            
-        except Exception as e:
-            print(f"⚠️ Index creation warning: {e}")
+            # Test if connection is still alive
+            self.client.admin.command('ping')
+            return True
+        except:
+            return self._connect()
     
     def create_user(self, user_data: Dict) -> bool:
         """Create new user"""
         try:
+            if not self._ensure_connection():
+                return False
+            
             self.db.users.insert_one(user_data)
             return True
         except Exception as e:
@@ -75,6 +75,9 @@ class MongoDBManager:
     def get_user_by_email(self, email: str) -> Optional[Dict]:
         """Get user by email"""
         try:
+            if not self._ensure_connection():
+                return None
+            
             return self.db.users.find_one({'email': email.lower().strip()})
         except Exception as e:
             print(f"Error getting user by email: {e}")
@@ -83,6 +86,9 @@ class MongoDBManager:
     def update_user_last_login(self, user_id: str):
         """Update user's last login timestamp"""
         try:
+            if not self._ensure_connection():
+                return
+            
             self.db.users.update_one(
                 {'user_id': user_id},
                 {'$set': {'last_login': datetime.utcnow()}}
@@ -93,6 +99,9 @@ class MongoDBManager:
     def log_file_upload(self, user_id: str, filename: str, pages: int) -> str:
         """Log file upload"""
         try:
+            if not self._ensure_connection():
+                return str(uuid.uuid4())
+            
             upload_id = str(uuid.uuid4())
             record = {
                 'upload_id': upload_id,
@@ -111,6 +120,9 @@ class MongoDBManager:
     def log_web_scrape(self, user_id: str, urls: List[str], successful: List[str]) -> str:
         """Log web scrape"""
         try:
+            if not self._ensure_connection():
+                return str(uuid.uuid4())
+            
             scrape_id = str(uuid.uuid4())
             record = {
                 'scrape_id': scrape_id,
@@ -129,6 +141,9 @@ class MongoDBManager:
     def get_user_files(self, user_id: str) -> List[Dict]:
         """Get user's uploaded files"""
         try:
+            if not self._ensure_connection():
+                return []
+            
             return list(self.db.file_uploads.find(
                 {'user_id': user_id},
                 sort=[('uploaded_at', DESCENDING)]
@@ -140,6 +155,9 @@ class MongoDBManager:
     def get_user_scrapes(self, user_id: str) -> List[Dict]:
         """Get user's web scrapes"""
         try:
+            if not self._ensure_connection():
+                return []
+            
             return list(self.db.web_scrapes.find(
                 {'user_id': user_id},
                 sort=[('scraped_at', DESCENDING)]
@@ -151,24 +169,21 @@ class MongoDBManager:
     def delete_file(self, upload_id: str) -> bool:
         """Delete file record"""
         try:
+            if not self._ensure_connection():
+                return False
+            
             result = self.db.file_uploads.delete_one({'upload_id': upload_id})
             return result.deleted_count > 0
         except Exception as e:
             print(f"Error deleting file: {e}")
             return False
     
-    def delete_scrape(self, scrape_id: str) -> bool:
-        """Delete scrape record"""
-        try:
-            result = self.db.web_scrapes.delete_one({'scrape_id': scrape_id})
-            return result.deleted_count > 0
-        except Exception as e:
-            print(f"Error deleting scrape: {e}")
-            return False
-    
     def clear_user_data(self, user_id: str) -> bool:
         """Clear all user data"""
         try:
+            if not self._ensure_connection():
+                return False
+            
             self.db.file_uploads.delete_many({'user_id': user_id})
             self.db.web_scrapes.delete_many({'user_id': user_id})
             self.db.query_logs.delete_many({'user_id': user_id})
@@ -180,6 +195,9 @@ class MongoDBManager:
     def get_user_stats(self, user_id: str) -> Dict[str, int]:
         """Get user statistics"""
         try:
+            if not self._ensure_connection():
+                return {'files_uploaded': 0, 'websites_scraped': 0, 'queries_made': 0}
+            
             files = self.db.file_uploads.count_documents({'user_id': user_id})
             scrapes = self.db.web_scrapes.count_documents({'user_id': user_id})
             queries = self.db.query_logs.count_documents({'user_id': user_id})
@@ -196,6 +214,9 @@ class MongoDBManager:
     def log_query(self, user_id: str, query: str, answer: str, sources: List[Dict]) -> str:
         """Log user query"""
         try:
+            if not self._ensure_connection():
+                return str(uuid.uuid4())
+            
             query_id = str(uuid.uuid4())
             record = {
                 'query_id': query_id,

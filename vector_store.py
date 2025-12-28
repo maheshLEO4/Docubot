@@ -42,18 +42,24 @@ class VectorStoreManager:
                 print("Qdrant configuration missing. Check your API keys.")
                 return None
             
+            # Create client with check_compatibility=False to suppress warning
             client = QdrantClient(
                 url=qdrant_config['url'],
                 api_key=qdrant_config['api_key'],
                 timeout=30,
+                check_compatibility=False
             )
             
-            # Test connection
-            client.get_collections()
-            return client
-            
+            # Simple connection test
+            try:
+                client.get_collections()
+                return client
+            except Exception as e:
+                print(f"Qdrant connection test failed: {e}")
+                return None
+                
         except Exception as e:
-            print(f"Error connecting to Qdrant: {e}")
+            print(f"Error creating Qdrant client: {e}")
             return None
     
     def get_store(self) -> Optional[Qdrant]:
@@ -102,17 +108,18 @@ class VectorStoreManager:
             if not client:
                 return False
             
-            # Check if collection exists
-            collections = client.get_collections()
-            collection_names = [col.name for col in collections.collections]
-            
-            if self.collection_name not in collection_names:
+            try:
+                # Try to get collection info
+                collection_info = client.get_collection(self.collection_name)
+                return collection_info.points_count > 0
+            except Exception as e:
+                # Collection doesn't exist
+                if "not found" in str(e).lower() or "NotFound" in str(e):
+                    return False
+                # Other error - log it but return False
+                print(f"Error getting collection info: {e}")
                 return False
-            
-            # Check if collection has data
-            collection_info = client.get_collection(self.collection_name)
-            return collection_info.points_count > 0
-            
+                
         except Exception as e:
             print(f"Error checking vector store existence: {e}")
             return False
@@ -149,8 +156,15 @@ class VectorStoreManager:
             if not client:
                 return False
             
-            # Delete the collection
-            client.delete_collection(self.collection_name)
+            try:
+                # Delete the collection
+                client.delete_collection(self.collection_name)
+            except Exception as e:
+                # If collection doesn't exist, that's fine
+                if "not found" in str(e).lower() or "NotFound" in str(e):
+                    return True
+                print(f"Error deleting collection: {e}")
+                return False
             
             # Clear cache
             cache_key = f"store_{self.user_id}"
@@ -160,9 +174,6 @@ class VectorStoreManager:
             return True
             
         except Exception as e:
-            # If collection doesn't exist, that's fine
-            if "not found" in str(e).lower():
-                return True
             print(f"Error clearing vector store: {e}")
             return False
     
