@@ -1,8 +1,6 @@
 import streamlit as st
-from langchain_groq import ChatGroq
 from vector_store import VectorStoreManager
 from config import config
-import os
 
 class QueryProcessor:
     """Optimized query processor with caching"""
@@ -23,6 +21,17 @@ class QueryProcessor:
         try:
             store = _self.vector_store.get_store()
             if not store:
+                print("QA Chain: Store not available")
+                return None
+            
+            # Check if store has documents
+            try:
+                test_results = store.similarity_search("test", k=1)
+                if len(test_results) == 0:
+                    print("QA Chain: Store has no documents")
+                    return None
+            except Exception as e:
+                print(f"QA Chain: Error checking store contents: {e}")
                 return None
             
             # Optimized retriever
@@ -34,8 +43,9 @@ class QueryProcessor:
                 }
             )
             
-            # Efficient prompt template
+            # Import PromptTemplate
             from langchain_core.prompts import PromptTemplate
+            
             prompt_template = """Use the following context to answer the question. 
             If you don't know the answer, say you don't know. Keep answers concise.
             
@@ -49,7 +59,8 @@ class QueryProcessor:
                 input_variables=["context", "question"]
             )
             
-            # Optimized LLM
+            # Import ChatGroq
+            from langchain_groq import ChatGroq
             llm = ChatGroq(
                 model_name="llama-3.1-8b-instant",
                 temperature=0.1,
@@ -58,7 +69,7 @@ class QueryProcessor:
                 groq_api_key=api_key
             )
             
-            # Create QA chain (updated for latest LangChain)
+            # Import RetrievalQA
             from langchain.chains import RetrievalQA
             qa_chain = RetrievalQA.from_chain_type(
                 llm=llm,
@@ -77,32 +88,6 @@ class QueryProcessor:
             print(f"Error creating QA chain: {e}")
             return None
     
-    def _format_sources(self, source_docs):
-        """Format source documents for display"""
-        formatted = []
-        for doc in source_docs[:3]:  # Limit to top 3
-            try:
-                metadata = doc.metadata
-                source = metadata.get('source', 'Unknown')
-                
-                if source.startswith(('http://', 'https://')):
-                    doc_type = 'web'
-                    doc_name = source.split('//')[-1].split('/')[0]
-                else:
-                    doc_type = 'pdf'
-                    doc_name = os.path.basename(str(source))
-                
-                formatted.append({
-                    'document': doc_name,
-                    'type': doc_type,
-                    'page': metadata.get('page', 'N/A'),
-                    'excerpt': doc.page_content[:150] + '...' if len(doc.page_content) > 150 else doc.page_content
-                })
-            except:
-                continue
-        
-        return formatted
-    
     def process(self, query: str, api_key: str) -> dict:
         """Process user query"""
         cache_key = f"{self.user_id}_{hash(query)}"
@@ -112,6 +97,13 @@ class QueryProcessor:
             return st.session_state.query_cache[cache_key]
         
         try:
+            # First check if vector store actually has data
+            if not self.vector_store.exists():
+                return {
+                    'success': False,
+                    'error': "Knowledge base is empty. Please add documents first."
+                }
+            
             # Get QA chain
             qa_chain = self._get_qa_chain(api_key)
             if not qa_chain:
@@ -139,13 +131,35 @@ class QueryProcessor:
             
         except Exception as e:
             error_msg = "Sorry, I encountered an issue. Please try again."
-            if "timeout" in str(e):
-                error_msg = "Request timed out. Please try a shorter question."
-            elif "rate limit" in str(e):
-                error_msg = "Rate limit exceeded. Please wait a moment."
-            
             print(f"Query error: {e}")
             return {
                 'success': False,
                 'error': error_msg
             }
+    
+    def _format_sources(self, source_docs):
+        """Format source documents for display"""
+        import os
+        formatted = []
+        for doc in source_docs[:3]:
+            try:
+                metadata = doc.metadata
+                source = metadata.get('source', 'Unknown')
+                
+                if source.startswith(('http://', 'https://')):
+                    doc_type = 'web'
+                    doc_name = source.split('//')[-1].split('/')[0]
+                else:
+                    doc_type = 'pdf'
+                    doc_name = os.path.basename(str(source))
+                
+                formatted.append({
+                    'document': doc_name,
+                    'type': doc_type,
+                    'page': metadata.get('page', 'N/A'),
+                    'excerpt': doc.page_content[:150] + '...' if len(doc.page_content) > 150 else doc.page_content
+                })
+            except:
+                continue
+        
+        return formatted

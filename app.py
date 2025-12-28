@@ -329,13 +329,15 @@ def render_chat_interface(user_id):
     st.markdown('<h1 class="main-header">DocuBot AI 🤖</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Chat with your documents and websites</p>', unsafe_allow_html=True)
     
-    # Welcome message
+    # Welcome message - FIXED: Check if vector store actually has data
+    vector_store = VectorStoreManager(user_id)
+    has_data = vector_store.exists()
+    
     if not st.session_state.messages:
-        if st.session_state.vector_store_exists:
+        if has_data:
             st.success("✅ Your knowledge base is ready! Ask questions about your documents.")
         else:
             st.info("📚 Add PDFs or websites in the sidebar to build your knowledge base.")
-    
     # Chat messages
     chat_container = st.container()
     with chat_container:
