@@ -5,6 +5,10 @@ langchain-community==0.0.32
 langchain-core==0.1.42
 langchain-groq>=0.1.0
 
+# 🔥 REQUIRED FOR AGENTIC WORKFLOW
+langgraph>=0.0.52
+langchain-experimental>=0.0.53
+
 sentence-transformers>=2.2.0
 pypdf>=3.0.0
 python-dotenv>=1.0.0
