@@ -2,7 +2,7 @@ import os
 import streamlit as st
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Qdrant
-from langchain.retrievers import BM25Retriever
+from langchain_community.retrievers import BM25Retriever
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 from data_processing import get_document_chunks
