@@ -4,8 +4,15 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 
 # Direct imports from the modular structure
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+# 2026 Direct Imports - bypassing the 'langchain.chains' namespace bridge
+try:
+    from langchain.chains.retrieval import create_retrieval_chain
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+except ImportError:
+    # Fallback to the direct sub-package locations if the bridge is broken
+    from langchain_community.chains.retrieval import create_retrieval_chain
+    from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
+
 from langchain_community.retrievers import EnsembleRetriever
 
 from vector_store import get_vector_store, get_bm25_retriever
