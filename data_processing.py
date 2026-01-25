@@ -1,7 +1,7 @@
 import os
 import concurrent.futures
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitters import RecursiveCharacterTextSplitter
 
 # Remove AuthManager import from here - we'll pass user_id as parameter
 
