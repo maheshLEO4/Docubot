@@ -2,13 +2,15 @@ import os
 import streamlit as st
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_groq import ChatGroq
-# Modern Chain Imports
+
+# Go directly to the source modules to bypass namespace conflicts
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers import EnsembleRetriever
+from langchain.retrievers.ensemble import EnsembleRetriever
 
 from vector_store import get_vector_store, get_bm25_retriever
-from agents.workflow import AgentWorkflow  # ✅ NEW IMPORT
+from agents.workflow import AgentWorkflow
+ # ✅ NEW IMPORT
 
 # ==========================
 # QA CHAIN (Modernized for v1.2.x Compatibility)
