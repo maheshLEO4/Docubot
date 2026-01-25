@@ -1,17 +1,15 @@
 streamlit>=1.53.1
-
-# LangChain 2026 Core Stack
 langchain==1.2.7
 langchain-core==1.2.7
 langchain-community==0.4.1
 langchain-text-splitters==1.1.0
 langchain-groq==1.1.1
-
-# Agentic workflow
 langgraph==1.0.7
-langchain-experimental==0.4.1
 
-# Rest of your dependencies...
+# We are omitting langchain-experimental temporarily to stop the 'classic' infection
+# If you absolutely need it, add it back ONLY after the app boots once successfully.
+
+# Other dependencies
 sentence-transformers>=5.2.0
 pypdf>=6.6.1
 python-dotenv>=1.2.1
@@ -22,3 +20,4 @@ qdrant-client>=1.16.2
 pymongo>=4.16.0
 bcrypt>=5.0.0
 beautifulsoup4==4.14.3
+lxml==6.0.2
