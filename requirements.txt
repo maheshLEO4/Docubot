@@ -1,30 +1,23 @@
-streamlit>=1.28.0
+streamlit>=1.53.1
 
-# LangChain & Agentic workflow
+# LangChain 2026 Core Stack
 langchain==1.2.7
+langchain-core==1.2.7
 langchain-community==0.4.1
+langchain-text-splitters==1.1.0
 langchain-groq==1.1.1
 
 # Agentic workflow
 langgraph==1.0.7
 langchain-experimental==0.4.1
 
-sentence-transformers>=2.2.0
-pypdf>=3.0.0
-python-dotenv>=1.0.0
-
-torch>=2.0.0
-numpy>=1.24.0
-
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-lxml>=4.9.0
-selenium>=4.15.0
-webdriver-manager>=4.0.0
-
-qdrant-client>=1.6.0
-pymongo>=4.5.0
-bcrypt>=4.0.0
-
-# BM25
+# Rest of your dependencies...
+sentence-transformers>=5.2.0
+pypdf>=6.6.1
+python-dotenv>=1.2.1
+torch>=2.10.0
+numpy>=2.4.1
 rank-bm25>=0.2.2
+qdrant-client>=1.16.2
+pymongo>=4.16.0
+bcrypt>=5.0.0
