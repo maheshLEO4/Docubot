@@ -1,12 +1,12 @@
 import os
 import streamlit as st
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 
-# Go directly to the source modules to bypass namespace conflicts
+# Direct imports from the modular structure
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.retrievers.ensemble import EnsembleRetriever
+from langchain_community.retrievers import EnsembleRetriever
 
 from vector_store import get_vector_store, get_bm25_retriever
 from agents.workflow import AgentWorkflow
