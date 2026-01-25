@@ -5,7 +5,7 @@ langchain==1.2.7
 langchain-community==0.4.1
 langchain-groq==1.1.1
 
-# 🔥 REQUIRED FOR AGENTIC WORKFLOW
+# Agentic workflow
 langgraph==1.0.7
 langchain-experimental==0.4.1
 
@@ -26,5 +26,5 @@ qdrant-client>=1.6.0
 pymongo>=4.5.0
 bcrypt>=4.0.0
 
-# 🔥 REQUIRED FOR BM25
+# BM25
 rank-bm25>=0.2.2
