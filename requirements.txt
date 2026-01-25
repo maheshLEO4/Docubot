@@ -1,12 +1,12 @@
 streamlit>=1.28.0
 
 # LangChain & Agentic workflow
-langchain>=0.1.0
+langchain==1.2.7
 langchain-community>=0.0.10
 langchain-groq>=0.1.0
 
 # 🔥 REQUIRED FOR AGENTIC WORKFLOW
-langgraph>=0.0.20
+langgraph==1.0.7
 langchain-experimental>=0.0.53
 
 sentence-transformers>=2.2.0
