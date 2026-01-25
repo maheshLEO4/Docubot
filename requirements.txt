@@ -6,7 +6,7 @@ langchain-core==0.1.42
 langchain-groq>=0.1.0
 
 # 🔥 REQUIRED FOR AGENTIC WORKFLOW
-langgraph==0.0.69
+langgraph==0.0.58
 langchain-experimental>=0.0.53
 
 sentence-transformers>=2.2.0
