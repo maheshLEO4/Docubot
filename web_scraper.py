@@ -2,7 +2,8 @@ import re
 import time
 import requests
 from bs4 import BeautifulSoup
-from langchain.schema import Document
+from langchain.docstore.document import Document
+
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import streamlit as st
