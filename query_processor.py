@@ -1,37 +1,38 @@
 import os
-from langchain_core.prompts import PromptTemplate
+import streamlit as st
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_groq import ChatGroq
-from langchain.chains import RetrievalQA
+# Modern Chain Imports
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.retrievers import EnsembleRetriever
+
 from vector_store import get_vector_store, get_bm25_retriever
 from agents.workflow import AgentWorkflow  # ✅ NEW IMPORT
 
 # ==========================
-# QA CHAIN (Keep for fallback if needed)
+# QA CHAIN (Modernized for v1.2.x Compatibility)
 # ==========================
 @st.cache_resource(show_spinner=False)
 def get_cached_qa_chain(groq_api_key, user_id):
-    """Cached QA chain - only loads once per user session"""
+    """Cached QA chain - modernized to use LCEL retrieval chain"""
     try:
         db = get_vector_store(user_id)
         if db is None:
             return None
 
-        CUSTOM_PROMPT_TEMPLATE = """
-        Use the pieces of information provided in the context to answer user's question.
-        If you dont know the answer, just say that you dont know, dont try to make up an answer. 
-        Dont provide anything out of the given context
-
-        Context: {context}
-        Question: {question}
-
-        Start the answer directly. No small talk please.
-        """
-
-        prompt = PromptTemplate(
-            template=CUSTOM_PROMPT_TEMPLATE,
-            input_variables=["context", "question"]
+        # Updated to ChatPromptTemplate for better compatibility with Llama 3 models
+        system_prompt = (
+            "Use the pieces of information provided in the context to answer user's question. "
+            "If you don't know the answer, just say that you don't know, don't try to make up an answer. "
+            "Don't provide anything out of the given context.\n\n"
+            "Context: {context}"
         )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "{input}"),
+        ])
 
         # ==========================
         # HYBRID RETRIEVER
@@ -56,13 +57,9 @@ def get_cached_qa_chain(groq_api_key, user_id):
             groq_api_key=groq_api_key,
         )
 
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=retriever,
-            return_source_documents=True,
-            chain_type_kwargs={'prompt': prompt}
-        )
+        # Replacement for legacy RetrievalQA
+        combine_docs_chain = create_stuff_documents_chain(llm, prompt)
+        qa_chain = create_retrieval_chain(retriever, combine_docs_chain)
 
         return qa_chain
 
@@ -128,7 +125,7 @@ def process_query(prompt, groq_api_key, user_id, use_agentic=True):  # ✅ Added
                 'error': "Knowledge base not ready. Please add documents first."
             }
 
-        # Create hybrid retriever (same as before)
+        # Create hybrid retriever
         vector_retriever = db.as_retriever(search_kwargs={"k": 8})  # More docs for agents
         bm25_retriever = get_bm25_retriever(user_id)
         
@@ -172,13 +169,16 @@ def process_query(prompt, groq_api_key, user_id, use_agentic=True):  # ✅ Added
                     'error': "Knowledge base not ready. Please add documents first."
                 }
 
-            response = qa_chain.invoke({'query': prompt})
+            # Modern chains use 'input' key instead of 'query'
+            response = qa_chain.invoke({'input': prompt})
 
             return {
                 'success': True,
-                'answer': response.get("result", "No answer generated."),
+                # Modern chains return 'answer' instead of 'result'
+                'answer': response.get("answer", "No answer generated."),
+                # Modern chains return 'context' instead of 'source_documents'
                 'sources': format_source_documents(
-                    response.get("source_documents", [])
+                    response.get("context", [])
                 ),
                 'verification_report': None  # No verification in classic mode
             }
