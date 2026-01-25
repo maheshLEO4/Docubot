@@ -1,13 +1,13 @@
 import os
-import streamlit as st
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 from langchain.retrievers import EnsembleRetriever
 from vector_store import get_vector_store, get_bm25_retriever
+from agents.workflow import AgentWorkflow  # ✅ NEW IMPORT
 
 # ==========================
-# QA CHAIN
+# QA CHAIN (Keep for fallback if needed)
 # ==========================
 @st.cache_resource(show_spinner=False)
 def get_cached_qa_chain(groq_api_key, user_id):
@@ -17,7 +17,6 @@ def get_cached_qa_chain(groq_api_key, user_id):
         if db is None:
             return None
 
-        # Prompt (unchanged)
         CUSTOM_PROMPT_TEMPLATE = """
         Use the pieces of information provided in the context to answer user's question.
         If you dont know the answer, just say that you dont know, dont try to make up an answer. 
@@ -35,27 +34,18 @@ def get_cached_qa_chain(groq_api_key, user_id):
         )
 
         # ==========================
-        # VECTOR RETRIEVER
-        # ==========================
-        vector_retriever = db.as_retriever(
-            search_kwargs={"k": 5}
-        )
-
-        # ==========================
-        # BM25 RETRIEVER
-        # ==========================
-        bm25_retriever = get_bm25_retriever(user_id)
-
-        # ==========================
         # HYBRID RETRIEVER
         # ==========================
+        vector_retriever = db.as_retriever(search_kwargs={"k": 5})
+        bm25_retriever = get_bm25_retriever(user_id)
+
         if bm25_retriever:
             retriever = EnsembleRetriever(
                 retrievers=[bm25_retriever, vector_retriever],
-                weights=[0.4, 0.6]  # BM25 + Semantic
+                weights=[0.4, 0.6]
             )
         else:
-            retriever = vector_retriever  # Fallback safety
+            retriever = vector_retriever
 
         # ==========================
         # LLM
@@ -81,7 +71,7 @@ def get_cached_qa_chain(groq_api_key, user_id):
         return None
 
 # ==========================
-# SOURCE FORMATTER
+# SOURCE FORMATTER (Keep as is)
 # ==========================
 def format_source_documents(source_documents):
     """Format source documents for display."""
@@ -123,28 +113,75 @@ def format_source_documents(source_documents):
     return formatted_sources
 
 # ==========================
-# QUERY PROCESSOR
+# AGENTIC QUERY PROCESSOR (MAIN UPDATE)
 # ==========================
-def process_query(prompt, groq_api_key, user_id):
+def process_query(prompt, groq_api_key, user_id, use_agentic=True):  # ✅ Added use_agentic param
     """Process user query and return answer with sources."""
     try:
-        qa_chain = get_cached_qa_chain(groq_api_key, user_id)
-
-        if not qa_chain:
+        # ==========================
+        # 1. GET RETRIEVER
+        # ==========================
+        db = get_vector_store(user_id)
+        if not db:
             return {
                 'success': False,
                 'error': "Knowledge base not ready. Please add documents first."
             }
 
-        response = qa_chain.invoke({'query': prompt})
-
-        return {
-            'success': True,
-            'answer': response.get("result", "No answer generated."),
-            'sources': format_source_documents(
-                response.get("source_documents", [])
+        # Create hybrid retriever (same as before)
+        vector_retriever = db.as_retriever(search_kwargs={"k": 8})  # More docs for agents
+        bm25_retriever = get_bm25_retriever(user_id)
+        
+        if bm25_retriever:
+            retriever = EnsembleRetriever(
+                retrievers=[bm25_retriever, vector_retriever],
+                weights=[0.4, 0.6]
             )
-        }
+        else:
+            retriever = vector_retriever
+
+        # ==========================
+        # 2. AGENTIC WORKFLOW
+        # ==========================
+        if use_agentic:
+            workflow = AgentWorkflow()
+            agent_result = workflow.full_pipeline(
+                question=prompt,
+                retriever=retriever
+            )
+            
+            # For source tracking, we still retrieve documents
+            retrieved_docs = retriever.invoke(prompt)
+            
+            return {
+                'success': True,
+                'answer': agent_result.get("draft_answer", "No answer generated."),
+                'sources': format_source_documents(retrieved_docs[:5]),  # Top 5 sources
+                'verification_report': agent_result.get("verification_report", "")
+            }
+        
+        # ==========================
+        # 3. FALLBACK: CLASSICAL QA
+        # ==========================
+        else:
+            qa_chain = get_cached_qa_chain(groq_api_key, user_id)
+            
+            if not qa_chain:
+                return {
+                    'success': False,
+                    'error': "Knowledge base not ready. Please add documents first."
+                }
+
+            response = qa_chain.invoke({'query': prompt})
+
+            return {
+                'success': True,
+                'answer': response.get("result", "No answer generated."),
+                'sources': format_source_documents(
+                    response.get("source_documents", [])
+                ),
+                'verification_report': None  # No verification in classic mode
+            }
 
     except Exception as e:
         error_msg = "Sorry, I encountered an issue processing your question. Please try again."

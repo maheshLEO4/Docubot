@@ -26,11 +26,13 @@ user_id = setup_authentication()
 # Initialize database
 db_manager = MongoDBManager()
 
-# Initialize session state with caching
+# Initialize session state with caching and agentic mode
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'source_docs' not in st.session_state:
     st.session_state.source_docs = {}
+if 'verification_reports' not in st.session_state:  # ✅ NEW: Store verification reports
+    st.session_state.verification_reports = {}
 if 'user_data_loaded' not in st.session_state:
     st.session_state.user_data_loaded = False
 if 'cached_user_files' not in st.session_state:
@@ -41,6 +43,8 @@ if 'vector_store_exists' not in st.session_state:
     st.session_state.vector_store_exists = vector_store_exists(user_id)
 if 'last_processed_query' not in st.session_state:
     st.session_state.last_processed_query = ""
+if 'use_agentic_mode' not in st.session_state:  # ✅ NEW: Agentic mode toggle
+    st.session_state.use_agentic_mode = True
 
 # Load user data once
 if user_id and not st.session_state.user_data_loaded:
@@ -62,20 +66,73 @@ def get_user_stats_cached(_db_manager, user_id):
     except Exception:
         return {'files_uploaded': 0, 'websites_scraped': 0}
 
+# Function to parse verification report
+def parse_verification_report(report_text):
+    """Parse verification report into structured format"""
+    if not report_text:
+        return {}
+    
+    parsed = {
+        "summary": "",
+        "supported": "Unknown",
+        "relevant": "Unknown",
+        "confidence": "Unknown",
+        "notes": []
+    }
+    
+    try:
+        lines = report_text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Check for key indicators
+            if "Supported:" in line:
+                parsed["supported"] = "YES" if "YES" in line.upper() else "NO"
+            elif "Relevant:" in line:
+                parsed["relevant"] = "YES" if "YES" in line.upper() else "NO"
+            elif "Confidence:" in line:
+                parsed["confidence"] = line.replace("Confidence:", "").strip()
+            elif "Summary:" in line:
+                parsed["summary"] = line.replace("Summary:", "").strip()
+            elif line.startswith("- "):
+                parsed["notes"].append(line[2:])
+            elif len(line) > 50 and not parsed["summary"]:  # Use first long line as summary
+                parsed["summary"] = line
+    except Exception:
+        parsed["summary"] = report_text[:200] + "..." if len(report_text) > 200 else report_text
+    
+    return parsed
+
 # --- Optimized Sidebar ---
 with st.sidebar:
     st.title("DocuBot Controls")
     st.markdown("AI-powered assistant for your documents and websites.")
     
     st.markdown("---")
-    st.success("Using Qdrant Cloud Storage")
     
-    # Knowledge Base Section - Use empty containers to prevent rerenders
+    # ✅ NEW: Agentic Mode Toggle
+    agentic_mode = st.checkbox(
+        "🤖 **Agentic Mode**", 
+        value=st.session_state.use_agentic_mode,
+        help="Enable advanced agent workflow with relevance checking, research, and verification"
+    )
+    st.session_state.use_agentic_mode = agentic_mode
+    
+    if agentic_mode:
+        st.caption("🔍 **Features active:** Relevance checking → Research → Verification loop")
+        st.success("Using Qdrant Cloud + Agentic Workflow")
+    else:
+        st.caption("⚡ **Classic mode:** Direct retrieval and answer")
+        st.success("Using Qdrant Cloud Storage")
+    
+    # Knowledge Base Section
     if st.session_state.vector_store_exists:
         st.markdown("---")
         st.subheader("Your Knowledge Base")
         
-        # Uploaded Files - Use container to isolate
+        # Uploaded Files
         files_container = st.container()
         with files_container:
             with st.expander("Uploaded Files", expanded=True):
@@ -95,7 +152,7 @@ with st.sidebar:
                 else:
                     st.info("No files uploaded yet")
         
-        # Scraped Websites - Use container to isolate
+        # Scraped Websites
         websites_container = st.container()
         with websites_container:
             with st.expander("Scraped Websites", expanded=True):
@@ -116,7 +173,7 @@ with st.sidebar:
                 else:
                     st.info("No websites scraped yet")
     
-    # Input sections - Use forms to prevent reruns
+    # Input sections
     st.markdown("---")
     input_tab1, input_tab2 = st.tabs(["Upload PDFs", "Add Websites"])
     
@@ -136,7 +193,7 @@ with st.sidebar:
         )
         urls_list = [url.strip() for url in website_urls.split('\n') if url.strip()] if website_urls else []
 
-    # Processing Options - Use forms
+    # Processing Options
     st.markdown("---")
     st.subheader("Processing Options")
     
@@ -147,34 +204,33 @@ with st.sidebar:
         help="Add to existing knowledge base or replace everything"
     )
     
-    # Process buttons in forms
-    with st.form("processing_form"):
-        col1, col2 = st.columns(2)
+    # Process buttons
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        process_pdfs = st.button(
+            "Process PDFs", 
+            use_container_width=True, 
+            type="primary",
+            disabled=not uploaded_files
+        )
         
-        with col1:
-            process_pdfs = st.form_submit_button(
-                "Process PDFs", 
-                use_container_width=True, 
-                type="primary",
-                disabled=not uploaded_files
-            )
-            
-            process_websites = st.form_submit_button(
-                "Scrape Websites", 
-                use_container_width=True,
-                type="primary",
-                disabled=not urls_list
-            )
+        process_websites = st.button(
+            "Scrape Websites", 
+            use_container_width=True,
+            type="primary",
+            disabled=not urls_list
+        )
 
-        with col2:
-            clear_all = st.form_submit_button(
-                "Clear All", 
-                use_container_width=True, 
-                type="secondary",
-                help="Clear entire knowledge base and chat history"
-            )
+    with col2:
+        clear_all = st.button(
+            "Clear All", 
+            use_container_width=True, 
+            type="secondary",
+            help="Clear entire knowledge base and chat history"
+        )
 
-    # Handle processing without full reruns
+    # Handle processing
     if process_pdfs and uploaded_files:
         with st.spinner("Processing PDF documents..."):
             try:
@@ -216,12 +272,14 @@ with st.sidebar:
             st.session_state.cached_user_scrapes = []
             st.session_state.messages = []
             st.session_state.source_docs = {}
+            st.session_state.verification_reports = {}  # ✅ Clear verification reports too
             st.toast(result, icon="✨")
 
     st.markdown("---")
     if st.button("Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.session_state.source_docs = {}
+        st.session_state.verification_reports = {}  # ✅ Clear verification reports
         st.toast("Chat history cleared!", icon="🧹")
     
     # Display stats with caching
@@ -235,16 +293,25 @@ with st.sidebar:
         
         st.write(f"**Files:** {files_count}")
         st.write(f"**Websites:** {websites_count}")
+        
+        # ✅ NEW: Show agent mode indicator
+        if st.session_state.use_agentic_mode:
+            st.caption("🤖 **Agentic mode:** Active")
 
 # --- Optimized Main Chat ---
 st.title("DocuBot AI: Chat with Your Documents & Websites")
 st.markdown("Ask questions about your uploaded PDFs and scraped websites.")
 
+# Mode indicator
+if st.session_state.use_agentic_mode:
+    st.info("🤖 **Agentic Mode Active** - Using advanced workflow with verification")
+else:
+    st.info("⚡ **Classic Mode** - Fast direct retrieval")
+
 # Welcome message - only show if no messages
 if not st.session_state.messages:
     if st.session_state.vector_store_exists:
         st.success("Ready! Your knowledge base is loaded and ready for questions.")
-        st.info("Using Qdrant Cloud for fast, scalable vector search")
     else:
         st.info("Upload PDFs or add websites in the sidebar to build your knowledge base.")
 
@@ -255,6 +322,53 @@ with chat_container:
         with st.chat_message(message['role']):
             st.markdown(message['content'])
             
+            # Show verification report for assistant messages in agentic mode
+            if (message['role'] == 'assistant' and 
+                idx in st.session_state.verification_reports):
+                
+                verification_data = st.session_state.verification_reports[idx]
+                if verification_data and st.session_state.use_agentic_mode:
+                    with st.expander("🔍 **Verification Report**", expanded=False):
+                        # Parse and display report
+                        parsed_report = parse_verification_report(verification_data)
+                        
+                        # Status badges
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            if parsed_report.get("supported") == "YES":
+                                st.success("✅ Supported")
+                            elif parsed_report.get("supported") == "NO":
+                                st.error("❌ Unsupported")
+                            else:
+                                st.info("🔍 Support Check")
+                        
+                        with col2:
+                            if parsed_report.get("relevant") == "YES":
+                                st.success("✅ Relevant")
+                            elif parsed_report.get("relevant") == "NO":
+                                st.error("❌ Irrelevant")
+                            else:
+                                st.info("🔍 Relevance")
+                        
+                        with col3:
+                            if parsed_report.get("confidence"):
+                                st.info(f"📊 {parsed_report['confidence']}")
+                        
+                        # Summary
+                        if parsed_report.get("summary"):
+                            st.markdown("**Summary:**")
+                            st.write(parsed_report["summary"])
+                        
+                        # Notes
+                        if parsed_report.get("notes"):
+                            st.markdown("**Notes:**")
+                            for note in parsed_report["notes"]:
+                                st.markdown(f"- {note}")
+                        
+                        # Raw report (collapsible)
+                        with st.expander("📋 View Raw Report"):
+                            st.code(verification_data)
+            
             # Show resources for assistant messages that have sources
             if (message['role'] == 'assistant' and 
                 idx in st.session_state.source_docs):
@@ -262,7 +376,7 @@ with chat_container:
                 source_documents = st.session_state.source_docs[idx]
                 
                 if source_documents and len(source_documents) > 0:
-                    with st.expander("Resources"):
+                    with st.expander("📚 **Resources**", expanded=False):
                         st.caption("Resources from your knowledge base")
                         
                         for i, doc in enumerate(source_documents, 1):
@@ -284,7 +398,7 @@ with chat_container:
                             st.caption(f'**Excerpt:** "{excerpt}"')
                             st.markdown("---")
 
-# Handle user input - prevent duplicate processing
+# Handle user input
 if prompt := st.chat_input("Ask a question about your knowledge base..."):
     # Prevent processing the same query multiple times
     if prompt != st.session_state.last_processed_query:
@@ -297,18 +411,67 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
             st.warning("Please add some content (PDFs or websites) before asking questions.")
         else:
             try:
-                with st.spinner("Thinking..."):
-                    result = process_query(prompt, api_key, user_id)
+                with st.spinner("Thinking..." if not st.session_state.use_agentic_mode else "🤖 Agentic workflow running..."):
+                    result = process_query(
+                        prompt, 
+                        api_key, 
+                        user_id,
+                        use_agentic=st.session_state.use_agentic_mode  # ✅ Pass the mode flag
+                    )
                     
                     if result['success']:
                         answer = result['answer']
                         source_documents = result['sources']
+                        verification_report = result.get('verification_report')  # ✅ Get verification report
 
                         with st.chat_message('assistant'):
                             st.markdown(answer)
                             
+                            # Display verification report if available
+                            if verification_report and st.session_state.use_agentic_mode:
+                                with st.expander("🔍 **Verification Report**", expanded=False):
+                                    parsed_report = parse_verification_report(verification_report)
+                                    
+                                    # Status badges
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        if parsed_report.get("supported") == "YES":
+                                            st.success("✅ Supported")
+                                        elif parsed_report.get("supported") == "NO":
+                                            st.error("❌ Unsupported")
+                                        else:
+                                            st.info("🔍 Support Check")
+                                    
+                                    with col2:
+                                        if parsed_report.get("relevant") == "YES":
+                                            st.success("✅ Relevant")
+                                        elif parsed_report.get("relevant") == "NO":
+                                            st.error("❌ Irrelevant")
+                                        else:
+                                            st.info("🔍 Relevance")
+                                    
+                                    with col3:
+                                        if parsed_report.get("confidence"):
+                                            st.info(f"📊 {parsed_report['confidence']}")
+                                    
+                                    # Summary
+                                    if parsed_report.get("summary"):
+                                        st.markdown("**Summary:**")
+                                        st.write(parsed_report["summary"])
+                                    
+                                    # Notes
+                                    if parsed_report.get("notes"):
+                                        st.markdown("**Notes:**")
+                                        for note in parsed_report["notes"]:
+                                            st.markdown(f"- {note}")
+                                    
+                                    # Raw report
+                                    with st.expander("📋 View Raw Report"):
+                                        st.code(verification_report)
+                            
+                            # Display resources
                             if source_documents:
-                                with st.expander("Resources"):
+                                with st.expander("📚 **Resources**", expanded=False):
                                     st.caption("Resources from your knowledge base")
                                     
                                     for i, doc in enumerate(source_documents, 1):
@@ -329,12 +492,16 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                         st.caption(f'**Excerpt:** "{excerpt}"')
                                         st.markdown("---")
                         
-                        # Store message and sources
+                        # Store message and associated data
                         message_index = len(st.session_state.messages)
                         st.session_state.messages.append({'role': 'assistant', 'content': answer})
                         st.session_state.source_docs[message_index] = source_documents
                         
-                        # Log query (non-blocking)
+                        # ✅ Store verification report for this message
+                        if verification_report:
+                            st.session_state.verification_reports[message_index] = verification_report
+                        
+                        # Log query
                         if source_documents:
                             try:
                                 db_manager.log_query(
@@ -342,7 +509,9 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                     query=prompt,
                                     response=answer,
                                     sources_used=source_documents,
-                                    processing_time=0
+                                    processing_time=0,
+                                    agentic_mode=st.session_state.use_agentic_mode,  # ✅ Log mode
+                                    verification_result=parsed_report.get("supported") if verification_report else None
                                 )
                             except Exception:
                                 pass  # Silently fail query logging
