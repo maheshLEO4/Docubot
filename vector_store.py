@@ -10,22 +10,21 @@ from web_scraper import scrape_urls_to_chunks
 from config import get_qdrant_config
 from database import MongoDBManager
 
-
 db_manager = MongoDBManager()
 
 # ==========================
-# EMBEDDINGS MODEL
+# EMBEDDINGS
 # ==========================
 @st.cache_resource
 def get_embedding_model():
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
     )
 
 # ==========================
-# QDRANT HELPERS
+# QDRANT
 # ==========================
 def get_user_collection_name(user_id):
     return f"docubot_user_{user_id}" if user_id else "docubot_default"
@@ -34,34 +33,36 @@ def get_user_collection_name(user_id):
 def get_qdrant_client():
     cfg = get_qdrant_config()
     return QdrantClient(
-        url=cfg['url'],
-        api_key=cfg['api_key'],
+        url=cfg["url"],
+        api_key=cfg["api_key"],
         timeout=30
     )
 
 @st.cache_resource
 def get_qdrant_vector_store(user_id):
     client = get_qdrant_client()
-    embedding_model = get_embedding_model()
+    embeddings = get_embedding_model()
     collection_name = get_user_collection_name(user_id)
 
-    # create collection if it doesn't exist
     try:
         client.get_collection(collection_name=collection_name)
     except Exception:
         client.create_collection(
             collection_name=collection_name,
-            vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+            vectors_config=VectorParams(
+                size=384,
+                distance=Distance.COSINE
+            )
         )
 
-    return QdrantVectorStore(
+    return Qdrant(
         client=client,
         collection_name=collection_name,
-        embedding=embedding_model
+        embeddings=embeddings
     )
 
 # ==========================
-# BM25 RETRIEVER
+# BM25
 # ==========================
 @st.cache_resource(show_spinner=False)
 def get_bm25_retriever(user_id):
@@ -81,34 +82,10 @@ def clear_all_data(user_id):
     collection_name = get_user_collection_name(user_id)
     try:
         client.delete_collection(collection_name=collection_name)
-        return "Cleared all vector data!"
+        return "Cleared all vector data"
     except Exception as e:
-        return f"Error clearing data: {str(e)}"
+        return str(e)
 
-def remove_documents_from_store(user_id, source, doc_type):
-    client = get_qdrant_client()
-    collection_name = get_user_collection_name(user_id)
-    scroll_result = client.scroll(collection_name=collection_name, limit=10000)
-    points_to_delete = []
-
-    for point in scroll_result[0]:
-        if point.payload and 'metadata' in point.payload:
-            metadata_source = point.payload['metadata'].get('source', '')
-            if doc_type == 'pdf':
-                if os.path.basename(metadata_source) == source or metadata_source.endswith(source):
-                    points_to_delete.append(point.id)
-            else:  # web
-                if metadata_source == source:
-                    points_to_delete.append(point.id)
-
-    if points_to_delete:
-        client.delete(collection_name=collection_name, points_selector=points_to_delete)
-
-    return True
-
-# ==========================
-# BUILD VECTOR STORE
-# ==========================
 def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
     if not user_id:
         raise ValueError("User not authenticated")
@@ -118,6 +95,7 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
 
     db = get_qdrant_vector_store(user_id)
     chunks, processed_files = get_document_chunks(user_id)
+
     if not chunks:
         return None, "no_documents"
 
@@ -128,10 +106,10 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
             user_id=user_id,
             filename=os.path.basename(filename),
             file_size=os.path.getsize(filename) if os.path.exists(filename) else 0,
-            pages_processed=len([c for c in chunks if c.metadata.get('source') == filename])
+            pages_processed=len([c for c in chunks if c.metadata.get("source") == filename])
         )
 
-    return db, "created" if not append else "updated"
+    return db, "created"
 
 def build_vector_store_from_urls(user_id, urls, append=False):
     if not user_id:
@@ -142,14 +120,20 @@ def build_vector_store_from_urls(user_id, urls, append=False):
 
     db = get_qdrant_vector_store(user_id)
     chunks = scrape_urls_to_chunks(urls)
+
     if not chunks:
         return None, "failed"
 
     db.add_documents(chunks)
-    successful_urls = list(set(chunk.metadata.get('source') for chunk in chunks))
-    db_manager.log_web_scrape(user_id=user_id, urls=urls, successful_urls=successful_urls, total_chunks=len(chunks))
 
-    return db, "created" if not append else "updated"
+    db_manager.log_web_scrape(
+        user_id=user_id,
+        urls=urls,
+        successful_urls=list(set(c.metadata.get("source") for c in chunks)),
+        total_chunks=len(chunks)
+    )
+
+    return db, "created"
 
 # ==========================
 # ACCESSORS
@@ -158,10 +142,11 @@ def get_vector_store(user_id):
     return get_qdrant_vector_store(user_id)
 
 def vector_store_exists(user_id):
-    client = get_qdrant_client()
-    collection_name = get_user_collection_name(user_id)
     try:
-        info = client.get_collection(collection_name=collection_name)
+        client = get_qdrant_client()
+        info = client.get_collection(
+            collection_name=get_user_collection_name(user_id)
+        )
         return info.points_count > 0
-    except:
+    except Exception:
         return False
