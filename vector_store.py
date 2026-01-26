@@ -86,6 +86,40 @@ def clear_all_data(user_id):
     except Exception as e:
         return str(e)
 
+def remove_documents_from_store(user_id, source, doc_type):
+    """
+    Remove documents from Qdrant by source (PDF or web URL)
+    """
+    client = get_qdrant_client()
+    collection_name = get_user_collection_name(user_id)
+
+    scroll_result = client.scroll(
+        collection_name=collection_name,
+        limit=10_000
+    )
+
+    points_to_delete = []
+
+    for point in scroll_result[0]:
+        payload = point.payload or {}
+        metadata = payload.get("metadata", {})
+        stored_source = metadata.get("source", "")
+
+        if doc_type == "pdf":
+            if os.path.basename(stored_source) == source or stored_source.endswith(source):
+                points_to_delete.append(point.id)
+        else:  # web
+            if stored_source == source:
+                points_to_delete.append(point.id)
+
+    if points_to_delete:
+        client.delete(
+            collection_name=collection_name,
+            points_selector=points_to_delete
+        )
+
+    return True
+
 def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
     if not user_id:
         raise ValueError("User not authenticated")
@@ -106,7 +140,9 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
             user_id=user_id,
             filename=os.path.basename(filename),
             file_size=os.path.getsize(filename) if os.path.exists(filename) else 0,
-            pages_processed=len([c for c in chunks if c.metadata.get("source") == filename])
+            pages_processed=len(
+                [c for c in chunks if c.metadata.get("source") == filename]
+            )
         )
 
     return db, "created"
