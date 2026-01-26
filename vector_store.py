@@ -1,7 +1,7 @@
 import os
 import streamlit as st
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Qdrant
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_qdrant import QdrantVectorStore
 from langchain_community.retrievers import BM25Retriever
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
@@ -19,7 +19,6 @@ db_manager = MongoDBManager()
 def get_embedding_model():
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
         encode_kwargs={"normalize_embeddings": True},
     )
 
@@ -35,7 +34,7 @@ def get_qdrant_client():
     return QdrantClient(
         url=cfg["url"],
         api_key=cfg["api_key"],
-        timeout=30
+        timeout=30,
     )
 
 @st.cache_resource
@@ -45,20 +44,20 @@ def get_qdrant_vector_store(user_id):
     collection_name = get_user_collection_name(user_id)
 
     try:
-        client.get_collection(collection_name=collection_name)
+        client.get_collection(collection_name)
     except Exception:
         client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(
                 size=384,
-                distance=Distance.COSINE
-            )
+                distance=Distance.COSINE,
+            ),
         )
 
-    return Qdrant(
+    return QdrantVectorStore(
         client=client,
         collection_name=collection_name,
-        embeddings=embeddings
+        embedding=embeddings,
     )
 
 # ==========================
@@ -79,100 +78,61 @@ def get_bm25_retriever(user_id):
 # ==========================
 def clear_all_data(user_id):
     client = get_qdrant_client()
-    collection_name = get_user_collection_name(user_id)
-    try:
-        client.delete_collection(collection_name=collection_name)
-        return "Cleared all vector data"
-    except Exception as e:
-        return str(e)
+    client.delete_collection(get_user_collection_name(user_id))
+    return "Cleared vector store"
 
 def remove_documents_from_store(user_id, source, doc_type):
-    """
-    Remove documents from Qdrant by source (PDF or web URL)
-    """
     client = get_qdrant_client()
-    collection_name = get_user_collection_name(user_id)
+    collection = get_user_collection_name(user_id)
 
-    scroll_result = client.scroll(
-        collection_name=collection_name,
-        limit=10_000
-    )
+    points, _ = client.scroll(collection_name=collection, limit=10_000)
+    delete_ids = []
 
-    points_to_delete = []
-
-    for point in scroll_result[0]:
-        payload = point.payload or {}
-        metadata = payload.get("metadata", {})
-        stored_source = metadata.get("source", "")
+    for p in points:
+        meta = (p.payload or {}).get("metadata", {})
+        stored = meta.get("source", "")
 
         if doc_type == "pdf":
-            if os.path.basename(stored_source) == source or stored_source.endswith(source):
-                points_to_delete.append(point.id)
-        else:  # web
-            if stored_source == source:
-                points_to_delete.append(point.id)
+            if stored.endswith(source):
+                delete_ids.append(p.id)
+        else:
+            if stored == source:
+                delete_ids.append(p.id)
 
-    if points_to_delete:
-        client.delete(
-            collection_name=collection_name,
-            points_selector=points_to_delete
-        )
+    if delete_ids:
+        client.delete(collection_name=collection, points_selector=delete_ids)
 
     return True
 
+# ==========================
+# BUILDERS
+# ==========================
 def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
-    if not user_id:
-        raise ValueError("User not authenticated")
-
     if not append:
         clear_all_data(user_id)
 
-    db = get_qdrant_vector_store(user_id)
-    chunks, processed_files = get_document_chunks(user_id)
+    store = get_qdrant_vector_store(user_id)
+    chunks, files = get_document_chunks(user_id)
 
-    if not chunks:
-        return None, "no_documents"
+    if chunks:
+        store.add_documents(chunks)
 
-    db.add_documents(chunks)
-
-    for filename in processed_files:
-        db_manager.log_file_upload(
-            user_id=user_id,
-            filename=os.path.basename(filename),
-            file_size=os.path.getsize(filename) if os.path.exists(filename) else 0,
-            pages_processed=len(
-                [c for c in chunks if c.metadata.get("source") == filename]
-            )
-        )
-
-    return db, "created"
+    return store, "created"
 
 def build_vector_store_from_urls(user_id, urls, append=False):
-    if not user_id:
-        raise ValueError("User not authenticated")
-
     if not append:
         clear_all_data(user_id)
 
-    db = get_qdrant_vector_store(user_id)
+    store = get_qdrant_vector_store(user_id)
     chunks = scrape_urls_to_chunks(urls)
 
-    if not chunks:
-        return None, "failed"
+    if chunks:
+        store.add_documents(chunks)
 
-    db.add_documents(chunks)
-
-    db_manager.log_web_scrape(
-        user_id=user_id,
-        urls=urls,
-        successful_urls=list(set(c.metadata.get("source") for c in chunks)),
-        total_chunks=len(chunks)
-    )
-
-    return db, "created"
+    return store, "created"
 
 # ==========================
-# ACCESSORS
+# ACCESS
 # ==========================
 def get_vector_store(user_id):
     return get_qdrant_vector_store(user_id)
@@ -180,9 +140,7 @@ def get_vector_store(user_id):
 def vector_store_exists(user_id):
     try:
         client = get_qdrant_client()
-        info = client.get_collection(
-            collection_name=get_user_collection_name(user_id)
-        )
+        info = client.get_collection(get_user_collection_name(user_id))
         return info.points_count > 0
     except Exception:
         return False
