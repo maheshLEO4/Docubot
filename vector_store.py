@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from langchain_community.retrievers import BM25Retriever
 from qdrant_client import QdrantClient
