@@ -1,19 +1,19 @@
 import os
 import streamlit as st
 from typing import List
+import logging
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Qdrant
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_qdrant import QdrantVectorStore
 from langchain_community.retrievers import BM25Retriever
 
 from agents.workflow import AgentWorkflow
 from vector_store import get_vector_store, get_bm25_retriever
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class HybridRetriever(BaseRetriever):
 
         for retriever in self.retrievers:
             results = retriever.invoke(
-                query, 
+                query,
                 config={"callbacks": run_manager.get_child() if run_manager else None}
             )
             for doc in results:
@@ -42,7 +42,7 @@ class HybridRetriever(BaseRetriever):
         return docs
 
 # ==========================
-# QA CHAIN (Modernized)
+# QA CHAIN
 # ==========================
 @st.cache_resource(show_spinner=False)
 def get_cached_qa_chain(groq_api_key, user_id):
@@ -63,25 +63,7 @@ def get_cached_qa_chain(groq_api_key, user_id):
             ("human", "{input}"),
         ])
 
-        # ==========================
-        # VECTOR STORE + BM25
-        # ==========================
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
-
-        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        qdrant_api_key = os.getenv("QDRANT_API_KEY")
-
-        vector_store = QdrantVectorStore(
-            client=db.qdrant_client,  # assuming get_vector_store exposes qdrant_client
-            collection_name=f"user_{user_id}_collection",
-            embedding=embeddings,
-        )
-
-        vector_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        vector_retriever = db.as_retriever(search_kwargs={"k": 5})
         bm25_retriever = get_bm25_retriever(user_id)
 
         if bm25_retriever:
@@ -89,16 +71,12 @@ def get_cached_qa_chain(groq_api_key, user_id):
         else:
             retriever = vector_retriever
 
-        # ==========================
-        # LLM
-        # ==========================
         llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
             temperature=0.1,
-            groq_api_key=groq_api_key,
+            groq_api_key=groq_api_key
         )
 
-        combine_docs_chain = llm  # modern chains can directly use the LLM
         return {
             "retriever": retriever,
             "llm": llm,
@@ -160,7 +138,6 @@ def process_query(prompt, groq_api_key, user_id, use_agentic=True):
             }
         else:
             retrieved_docs = retriever.invoke(prompt)
-            # Use LLM + prompt for classical QA
             input_text = chat_prompt.format(input=prompt, context="\n".join([d.page_content for d in retrieved_docs]))
             answer = llm.invoke({"input": input_text}).get("answer", "No answer generated.")
             return {
