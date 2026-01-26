@@ -1,7 +1,7 @@
 import os
 import streamlit as st
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_qdrant import QdrantVectorStore
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Qdrant
 from langchain_community.retrievers import BM25Retriever
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
@@ -9,6 +9,7 @@ from data_processing import get_document_chunks
 from web_scraper import scrape_urls_to_chunks
 from config import get_qdrant_config
 from database import MongoDBManager
+
 
 db_manager = MongoDBManager()
 
