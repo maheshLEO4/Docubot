@@ -1,22 +1,16 @@
 import os
 import streamlit as st
-from typing import List
 import logging
+from typing import List
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Qdrant
-from langchain_community.retrievers import BM25Retriever
 
 from agents.workflow import AgentWorkflow
 from vector_store import get_vector_store, get_bm25_retriever
-
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +23,7 @@ class HybridRetriever(BaseRetriever):
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
     ) -> List[Document]:
-        docs: List[Document] = []
+        docs = []
         seen = set()
 
         for retriever in self.retrievers:
@@ -38,10 +32,11 @@ class HybridRetriever(BaseRetriever):
                 config={"callbacks": run_manager.get_child() if run_manager else None}
             )
             for doc in results:
-                doc_id = hash(doc.page_content)
-                if doc_id not in seen:
-                    seen.add(doc_id)
+                key = hash(doc.page_content)
+                if key not in seen:
+                    seen.add(key)
                     docs.append(doc)
+
         return docs
 
 # ==========================
@@ -50,29 +45,28 @@ class HybridRetriever(BaseRetriever):
 @st.cache_resource(show_spinner=False)
 def get_cached_qa_chain(groq_api_key, user_id):
     try:
-        db = get_vector_store(user_id)
-        if not db:
+        vector_store = get_vector_store(user_id)
+        if not vector_store:
             return None
 
         system_prompt = (
-            "Use the pieces of information provided in the context to answer user's question. "
-            "If you don't know the answer, just say that you don't know, don't try to make up an answer. "
-            "Don't provide anything out of the given context.\n\n"
-            "Context: {context}"
+            "Use the provided context to answer the question. "
+            "If the answer is not in the context, say you don't know.\n\n"
+            "Context:\n{context}"
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
-            ("human", "{input}"),
+            ("human", "{input}")
         ])
 
-        vector_retriever = db.as_retriever(search_kwargs={"k": 5})
-        bm25_retriever = get_bm25_retriever(user_id)
+        vector_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        bm25 = get_bm25_retriever(user_id)
 
-        if bm25_retriever:
-            retriever = HybridRetriever(retrievers=[bm25_retriever, vector_retriever])
-        else:
-            retriever = vector_retriever
+        retriever = (
+            HybridRetriever(retrievers=[bm25, vector_retriever])
+            if bm25 else vector_retriever
+        )
 
         llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
@@ -86,70 +80,65 @@ def get_cached_qa_chain(groq_api_key, user_id):
             "prompt": prompt
         }
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error creating QA chain")
         return None
 
 # ==========================
 # SOURCE FORMATTER
 # ==========================
-def format_source_documents(source_documents):
-    formatted_sources = []
-    for doc in source_documents:
-        try:
-            metadata = doc.metadata
-            source = metadata.get("source", "Unknown")
-            source_type = "web" if isinstance(source, str) and source.startswith(("http://", "https://")) else "pdf"
-            source_name = os.path.basename(str(source)) if source_type == "pdf" else source
-            page_num = metadata.get("page", "N/A")
-            if isinstance(page_num, int):
-                page_num += 1
-            excerpt = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
-            formatted_sources.append({
-                "document": source_name,
-                "page": page_num,
-                "excerpt": excerpt,
-                "type": source_type
-            })
-        except Exception as e:
-            logger.warning(f"Error formatting source: {e}")
-            continue
-    return formatted_sources
+def format_source_documents(docs):
+    sources = []
+    for doc in docs:
+        meta = doc.metadata or {}
+        source = meta.get("source", "Unknown")
+        page = meta.get("page", "N/A")
+        if isinstance(page, int):
+            page += 1
+
+        sources.append({
+            "document": os.path.basename(source),
+            "page": page,
+            "excerpt": doc.page_content[:200] + "..."
+        })
+    return sources
 
 # ==========================
 # PROCESS QUERY
 # ==========================
 def process_query(prompt, groq_api_key, user_id, use_agentic=True):
+    qa = get_cached_qa_chain(groq_api_key, user_id)
+    if not qa:
+        return {"success": False, "error": "Knowledge base not ready"}
+
+    retriever = qa["retriever"]
+    llm = qa["llm"]
+    chat_prompt = qa["prompt"]
+
     try:
-        qa_data = get_cached_qa_chain(groq_api_key, user_id)
-        if not qa_data:
-            return {"success": False, "error": "Knowledge base not ready. Please add documents first."}
-
-        retriever = qa_data["retriever"]
-        llm = qa_data["llm"]
-        chat_prompt = qa_data["prompt"]
-
         if use_agentic:
             workflow = AgentWorkflow()
-            agent_result = workflow.full_pipeline(question=prompt, retriever=retriever)
-            retrieved_docs = retriever.invoke(prompt)
+            result = workflow.full_pipeline(prompt, retriever)
+            docs = retriever.invoke(prompt)
             return {
                 "success": True,
-                "answer": agent_result.get("draft_answer", "No answer generated."),
-                "sources": format_source_documents(retrieved_docs[:5]),
-                "verification_report": agent_result.get("verification_report", "")
-            }
-        else:
-            retrieved_docs = retriever.invoke(prompt)
-            input_text = chat_prompt.format(input=prompt, context="\n".join([d.page_content for d in retrieved_docs]))
-            answer = llm.invoke({"input": input_text}).get("answer", "No answer generated.")
-            return {
-                "success": True,
-                "answer": answer,
-                "sources": format_source_documents(retrieved_docs[:5]),
-                "verification_report": None
+                "answer": result.get("draft_answer"),
+                "sources": format_source_documents(docs[:5]),
+                "verification_report": result.get("verification_report")
             }
 
+        docs = retriever.invoke(prompt)
+        context = "\n".join(d.page_content for d in docs)
+        message = chat_prompt.format(input=prompt, context=context)
+        answer = llm.invoke(message)
+
+        return {
+            "success": True,
+            "answer": answer.content,
+            "sources": format_source_documents(docs[:5]),
+            "verification_report": None
+        }
+
     except Exception as e:
-        logger.exception(f"Query processing error: {e}")
+        logger.exception("Query failed")
         return {"success": False, "error": str(e)}
