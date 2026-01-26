@@ -8,12 +8,15 @@ from langchain_groq import ChatGroq
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_qdrant import QdrantVectorStore
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Qdrant
 from langchain_community.retrievers import BM25Retriever
 
 from agents.workflow import AgentWorkflow
 from vector_store import get_vector_store, get_bm25_retriever
+
+
+
 
 logger = logging.getLogger(__name__)
 
