@@ -87,7 +87,7 @@ def get_cached_qa_chain(groq_api_key, user_id):
         return None
 
 # ==========================
-# SOURCE FORMATTER (EXACTLY ORIGINAL)
+# SOURCE FORMATTER (FIXED VERSION)
 # ==========================
 def format_source_documents(docs):
     sources = []
@@ -98,11 +98,15 @@ def format_source_documents(docs):
         if isinstance(page, int):
             page += 1
 
+        # FIXED: Check if source is a URL to determine type
+        source_str = str(source)
+        doc_type = "web" if source_str.startswith(('http://', 'https://')) else "pdf"
+
         sources.append({
-            "document": os.path.basename(source),
+            "document": os.path.basename(source_str),
             "page": page,
             "excerpt": doc.page_content[:200] + "...",
-            "type": "web" if doc.get('type') == 'web' else "pdf"  # ✅ ORIGINAL
+            "type": doc_type
         })
     return sources
 
