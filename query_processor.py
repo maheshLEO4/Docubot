@@ -52,10 +52,12 @@ def get_cached_qa_chain(groq_api_key, user_id):
         vector_store = get_vector_store(user_id)
         if not vector_store:
             return None
+        # In the get_cached_qa_chain() function, update the system prompt:
         system_prompt = (
-            "Answer the question based on the information available.\n"
-            "If you don't have the information, simply say 'I don't know'.\n"
-            "Don't mention sources or context in your answer.\n\n"
+            "You are a helpful assistant answering questions based on available information.\n"
+            "If the answer is not in the information below, simply say: 'Sorry, I don't have any information about your question.'\n"
+            "Do not mention 'context', 'documents', or 'provided information' in your response.\n"
+            "If you have relevant information, answer naturally and directly.\n\n"
             "Information:\n{context}"
         )
 
