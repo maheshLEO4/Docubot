@@ -280,14 +280,15 @@ def clean_content(content):
     return cleaned_content.strip()
 
 def create_document(content, url, title, method):
-    """Create LangChain Document object"""
+    """Create LangChain Document object with consistent metadata"""
     return [Document(
         page_content=content,
         metadata={
             "source": url,
             "title": title,
             "scraping_method": method,
-            "content_length": len(content)
+            "content_length": len(content),
+            "type": "web"  # ← ADDED: Consistent type field for web content
         }
     )]
 
