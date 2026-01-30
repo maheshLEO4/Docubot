@@ -15,11 +15,11 @@ from vector_store import get_vector_store, get_bm25_retriever
 logger = logging.getLogger(__name__)
 
 # ==========================
-# HYBRID RETRIEVER (ORIGINAL + RESULT LIMIT)
+# HYBRID RETRIEVER (ORIGINAL VERSION - ONLY ADDED RESULT LIMIT)
 # ==========================
 class HybridRetriever(BaseRetriever):
     retrievers: List[BaseRetriever]
-    
+
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
     ) -> List[Document]:
@@ -37,14 +37,14 @@ class HybridRetriever(BaseRetriever):
                     seen.add(key)
                     docs.append(doc)
                     
-                    # Limit to 5 total results for efficiency
+                    # ✅ ONLY ADDITION: Limit to 5 results total
                     if len(docs) >= 5:
                         return docs
 
         return docs
 
 # ==========================
-# QA CHAIN
+# QA CHAIN (EXACTLY ORIGINAL)
 # ==========================
 @st.cache_resource(show_spinner=False)
 def get_cached_qa_chain(groq_api_key, user_id):
@@ -67,10 +67,8 @@ def get_cached_qa_chain(groq_api_key, user_id):
         vector_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
         bm25 = get_bm25_retriever(user_id)
 
-        # Create hybrid retriever
-        retriever = HybridRetriever(
-            retrievers=[bm25, vector_retriever] if bm25 else [vector_retriever]
-        )
+        # ✅ ORIGINAL: No weights, just the retriever list
+        retriever = HybridRetriever(retrievers=[bm25, vector_retriever] if bm25 else [vector_retriever])
 
         llm = ChatGroq(
             model_name="llama-3.1-8b-instant",
@@ -84,12 +82,12 @@ def get_cached_qa_chain(groq_api_key, user_id):
             "prompt": prompt
         }
 
-    except Exception as e:
-        logger.exception(f"Error creating QA chain: {e}")
+    except Exception:
+        logger.exception("Error creating QA chain")
         return None
 
 # ==========================
-# SOURCE FORMATTER
+# SOURCE FORMATTER (EXACTLY ORIGINAL)
 # ==========================
 def format_source_documents(docs):
     sources = []
@@ -104,12 +102,12 @@ def format_source_documents(docs):
             "document": os.path.basename(source),
             "page": page,
             "excerpt": doc.page_content[:200] + "...",
-            "type": "web" if 'http' in source.lower() else "pdf"
+            "type": "web" if doc.get('type') == 'web' else "pdf"  # ✅ ORIGINAL
         })
     return sources
 
 # ==========================
-# PROCESS QUERY
+# PROCESS QUERY (EXACTLY ORIGINAL WITH VERIFICATION)
 # ==========================
 def process_query(prompt, groq_api_key, user_id, use_agentic=True):
     qa = get_cached_qa_chain(groq_api_key, user_id)
@@ -129,10 +127,9 @@ def process_query(prompt, groq_api_key, user_id, use_agentic=True):
                 "success": True,
                 "answer": result.get("draft_answer"),
                 "sources": format_source_documents(docs[:5]),
-                "verification_report": result.get("verification_report")
+                "verification_report": result.get("verification_report")  # ✅ ORIGINAL VERIFICATION
             }
 
-        # Classic mode
         docs = retriever.invoke(prompt)
         context = "\n".join(d.page_content for d in docs)
         message = chat_prompt.format(input=prompt, context=context)
@@ -142,7 +139,7 @@ def process_query(prompt, groq_api_key, user_id, use_agentic=True):
             "success": True,
             "answer": answer.content,
             "sources": format_source_documents(docs[:5]),
-            "verification_report": None
+            "verification_report": None  # ✅ ORIGINAL: None for classic mode
         }
 
     except Exception as e:
