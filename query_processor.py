@@ -1,8 +1,7 @@
 import os
 import streamlit as st
 import logging
-from typing import List, Dict, Tuple
-import hashlib
+from typing import List
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
@@ -16,75 +15,33 @@ from vector_store import get_vector_store, get_bm25_retriever
 logger = logging.getLogger(__name__)
 
 # ==========================
-# IMPROVED HYBRID RETRIEVER
+# HYBRID RETRIEVER (ORIGINAL + RESULT LIMIT)
 # ==========================
 class HybridRetriever(BaseRetriever):
     retrievers: List[BaseRetriever]
-    weights: List[float] = None
-    final_k: int = 5  # Limit final results
     
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
     ) -> List[Document]:
-        all_docs_with_scores = []
-        
-        for idx, retriever in enumerate(self.retrievers):
-            try:
-                results = retriever.invoke(
-                    query,
-                    config={"callbacks": run_manager.get_child() if run_manager else None}
-                )
-                
-                # Add scores based on position and retriever weight
-                for i, doc in enumerate(results):
-                    # Create unique key for deduplication (FIXED: content + source + page)
-                    source = doc.metadata.get('source', 'unknown')
-                    page = doc.metadata.get('page', 0)
+        docs = []
+        seen = set()
+
+        for retriever in self.retrievers:
+            results = retriever.invoke(
+                query,
+                config={"callbacks": run_manager.get_child() if run_manager else None}
+            )
+            for doc in results:
+                key = hash(doc.page_content)
+                if key not in seen:
+                    seen.add(key)
+                    docs.append(doc)
                     
-                    # Clean content for better deduplication
-                    content_clean = doc.page_content.lower().strip()
-                    content_clean = ' '.join(content_clean.split())  # Remove extra whitespace
-                    
-                    # Create key from content hash + source + page
-                    content_hash = hashlib.md5(content_clean[:500].encode()).hexdigest()[:10]
-                    key = f"{source}_{page}_{content_hash}"
-                    
-                    # Calculate score (higher rank = better)
-                    position_score = 1.0 / (i + 1)  # 1st: 1.0, 2nd: 0.5, 3rd: 0.33, etc.
-                    
-                    # Apply weight if provided (Intelligent weighting)
-                    if self.weights and idx < len(self.weights):
-                        position_score *= self.weights[idx]
-                    
-                    # Store retriever type for identification
-                    retriever_type = "bm25" if idx == 0 else "vector"
-                    
-                    all_docs_with_scores.append({
-                        'doc': doc,
-                        'key': key,
-                        'position_score': position_score,
-                        'retriever_type': retriever_type,
-                        'retriever_idx': idx,
-                        'position': i
-                    })
-            except Exception as e:
-                logger.error(f"Retriever {idx} failed: {e}")
-                continue
-        
-        # Deduplicate and sort by combined score
-        seen_keys = set()
-        unique_docs = []
-        
-        # Sort by position score (highest first) - Intelligent ranking
-        for item in sorted(all_docs_with_scores, key=lambda x: x['position_score'], reverse=True):
-            if item['key'] not in seen_keys:
-                seen_keys.add(item['key'])
-                unique_docs.append(item['doc'])
-                
-                if len(unique_docs) >= self.final_k:  # Limit final results
-                    break
-        
-        return unique_docs
+                    # Limit to 5 total results for efficiency
+                    if len(docs) >= 5:
+                        return docs
+
+        return docs
 
 # ==========================
 # QA CHAIN
@@ -110,11 +67,9 @@ def get_cached_qa_chain(groq_api_key, user_id):
         vector_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
         bm25 = get_bm25_retriever(user_id)
 
-        # Create improved hybrid retriever with intelligent weighting
+        # Create hybrid retriever
         retriever = HybridRetriever(
-            retrievers=[bm25, vector_retriever] if bm25 else [vector_retriever],
-            weights=[0.3, 0.7] if bm25 else [1.0],  # Vector search gets more weight
-            final_k=5  # Limit to 5 best results
+            retrievers=[bm25, vector_retriever] if bm25 else [vector_retriever]
         )
 
         llm = ChatGroq(
