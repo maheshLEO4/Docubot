@@ -52,11 +52,11 @@ def get_cached_qa_chain(groq_api_key, user_id):
         vector_store = get_vector_store(user_id)
         if not vector_store:
             return None
-
         system_prompt = (
-            "Use the provided context to answer the question. "
-            "If the answer is not in the context, say you don't know.\n\n"
-            "Context:\n{context}"
+            "Answer the question based on the information available.\n"
+            "If you don't have the information, simply say 'I don't know'.\n"
+            "Don't mention sources or context in your answer.\n\n"
+            "Information:\n{context}"
         )
 
         prompt = ChatPromptTemplate.from_messages([
