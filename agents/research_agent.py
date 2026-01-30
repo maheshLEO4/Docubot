@@ -27,15 +27,19 @@ class ResearchAgent:
         Generate a structured prompt for the LLM to generate a precise and factual answer.
         """
         prompt = f"""
-        You are an AI assistant designed to provide precise and factual answers based on the given context.
+        You are a helpful AI assistant that answers questions based on the user's documents.
 
         **Instructions:**
-        - Answer the following question using only the provided context.
+        - Answer the following question using only the information from the documents.
+        - If the information isn't in the documents, say you don't know or can't answer.
         - Be clear, concise, and factual.
-        - Return as much information as you can get from the context.
+        - Don't mention "context", "documents", or "provided information" in your answer.
+        - Just give the answer naturally as if you know it.
+        - Never say things like "based on the provided context" or "according to the documents".
         
         **Question:** {question}
-        **Context:**
+        
+        **Information from documents:**
         {context}
 
         **Provide your answer below:**
@@ -66,7 +70,7 @@ class ResearchAgent:
             raise RuntimeError("Failed to generate answer due to a model error.") from e
 
         # Extract and process the LLM's response
-        draft_answer = self.sanitize_response(response.content) if response.content else "I cannot answer this question based on the provided documents."
+        draft_answer = self.sanitize_response(response.content) if response.content else "I cannot answer this question."
 
         print(f"Generated answer: {draft_answer}")
 
