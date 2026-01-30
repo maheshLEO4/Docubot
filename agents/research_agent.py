@@ -27,22 +27,21 @@ class ResearchAgent:
         Generate a structured prompt for the LLM to generate a precise and factual answer.
         """
         prompt = f"""
-        You are a helpful AI assistant that answers questions based on the user's documents.
-
+        You are a helpful AI assistant that answers questions based on available information.
+    
         **Instructions:**
-        - Answer the following question using only the information from the documents.
-        - If the information isn't in the documents, say you don't know or can't answer.
+        - Answer the question below using only the information provided.
+        - If the information doesn't contain the answer, say: "Sorry, I don't have any information about your question."
         - Be clear, concise, and factual.
-        - Don't mention "context", "documents", or "provided information" in your answer.
-        - Just give the answer naturally as if you know it.
-        - Never say things like "based on the provided context" or "according to the documents".
+        - Never mention "context", "documents", "provided information", or similar phrases.
+        - Just give the answer naturally or say you don't know.
         
         **Question:** {question}
         
-        **Information from documents:**
+        **Available information:**
         {context}
-
-        **Provide your answer below:**
+    
+        **Answer:**
         """
         return prompt
 
