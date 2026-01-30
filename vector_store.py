@@ -3,6 +3,7 @@ import streamlit as st
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 from data_processing import get_document_chunks
@@ -61,17 +62,87 @@ def get_qdrant_vector_store(user_id):
     )
 
 # ==========================
-# BM25
+# BM25 - UPDATED TO USE VECTOR DB TEXT
 # ==========================
 @st.cache_resource(show_spinner=False)
 def get_bm25_retriever(user_id):
-    chunks, _ = get_document_chunks(user_id)
-    if not chunks:
+    """Get BM25 retriever from ALL content in vector store (PDFs + Websites)"""
+    try:
+        # Get all documents from Qdrant vector store
+        client = get_qdrant_client()
+        collection_name = get_user_collection_name(user_id)
+        
+        # Check if collection exists
+        try:
+            client.get_collection(collection_name)
+        except Exception:
+            # Collection doesn't exist yet
+            return None
+        
+        # Fetch all documents from vector store
+        all_points = []
+        next_offset = None
+        
+        # Scroll through all points in collection
+        while True:
+            points, next_offset = client.scroll(
+                collection_name=collection_name,
+                limit=100,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False
+            )
+            
+            if not points:
+                break
+                
+            all_points.extend(points)
+            
+            if next_offset is None:
+                break
+        
+        if not all_points:
+            return None
+        
+        # Convert points to LangChain Documents
+        documents = []
+        for point in all_points:
+            payload = point.payload or {}
+            page_content = payload.get('page_content', '')
+            
+            if not page_content or len(page_content.strip()) == 0:
+                continue
+                
+            # Extract metadata
+            metadata = payload.get('metadata', {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            
+            # Ensure type field exists for consistency
+            if 'type' not in metadata:
+                if 'scraping_method' in metadata:
+                    metadata['type'] = 'web'
+                else:
+                    metadata['type'] = 'pdf'
+            
+            documents.append(Document(
+                page_content=page_content,
+                metadata=metadata
+            ))
+        
+        if not documents:
+            return None
+            
+        # Create BM25 retriever
+        bm25 = BM25Retriever.from_documents(documents)
+        bm25.k = 5
+        
+        print(f"✅ BM25 loaded {len(documents)} documents from vector store")
+        return bm25
+        
+    except Exception as e:
+        print(f"❌ Error creating BM25 retriever from vector store: {e}")
         return None
-
-    bm25 = BM25Retriever.from_documents(chunks)
-    bm25.k = 5
-    return bm25
 
 # ==========================
 # DATA MANAGEMENT
