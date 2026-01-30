@@ -66,9 +66,9 @@ def get_user_stats_cached(_db_manager, user_id):
     except Exception:
         return {'files_uploaded': 0, 'websites_scraped': 0}
 
-# Function to parse verification report
+# Function to parse verification report with retrieval scores
 def parse_verification_report(report_text):
-    """Parse verification report into structured format"""
+    """Parse verification report into structured format including retrieval scores"""
     if not report_text:
         return {}
     
@@ -77,17 +77,91 @@ def parse_verification_report(report_text):
         "supported": "Unknown",
         "relevant": "Unknown",
         "confidence": "Unknown",
-        "notes": []
+        "notes": [],
+        "retrieval_scores": {
+            "bm25": [],
+            "vector": [],
+            "combined": []
+        }
     }
     
     try:
         lines = report_text.split('\n')
+        in_retrieval_scores = False
+        current_section = ""
+        
         for line in lines:
             line = line.strip()
             if not line:
                 continue
                 
-            # Check for key indicators
+            # Check for retrieval scores section
+            if "--- RETRIEVAL SCORES ---" in line:
+                in_retrieval_scores = True
+                continue
+            
+            if in_retrieval_scores:
+                if line.startswith("BM25 Results:"):
+                    current_section = "bm25"
+                    continue
+                elif line.startswith("Vector Results:"):
+                    current_section = "vector"
+                    continue
+                elif line.startswith("Combined Top Results:"):
+                    current_section = "combined"
+                    continue
+                elif current_section and line and line[0].isdigit():
+                    # Parse score line like "1. Score: 0.833 | Source: example.pdf..."
+                    if ". Score:" in line:
+                        try:
+                            # Extract the number part (remove the "1. " prefix)
+                            content = line[line.find('. ')+2:] if '. ' in line else line
+                            
+                            # Split by pipe to get score and source parts
+                            parts = [p.strip() for p in content.split('|')]
+                            
+                            score_part = ""
+                            source_part = ""
+                            
+                            for part in parts:
+                                if "Score:" in part:
+                                    score_part = part.replace("Score:", "").strip()
+                                elif "Source:" in part:
+                                    source_part = part.replace("Source:", "").strip()
+                            
+                            # Parse score value
+                            score_value = 0.0
+                            try:
+                                # Extract numeric value from score part
+                                import re
+                                score_match = re.search(r'[\d\.]+', score_part)
+                                if score_match:
+                                    score_value = float(score_match.group())
+                            except:
+                                score_value = 0.0
+                            
+                            # Check if it's a combined result with retriever type
+                            retriever_type = "Unknown"
+                            if "[" in line and "]" in line:
+                                import re
+                                match = re.search(r'\[([^\]]+)\]', line)
+                                if match:
+                                    retriever_type = match.group(1)
+                            
+                            score_entry = {
+                                "score": score_part,
+                                "score_value": score_value,
+                                "source": source_part[:80] + "..." if len(source_part) > 80 else source_part,
+                                "retriever_type": retriever_type,
+                                "display": line
+                            }
+                            parsed["retrieval_scores"][current_section].append(score_entry)
+                        except Exception as e:
+                            print(f"Error parsing score line: {e}")
+                            continue
+                continue
+            
+            # Original parsing logic for verification report
             if "Supported:" in line:
                 parsed["supported"] = "YES" if "YES" in line.upper() else "NO"
             elif "Relevant:" in line:
@@ -98,9 +172,10 @@ def parse_verification_report(report_text):
                 parsed["summary"] = line.replace("Summary:", "").strip()
             elif line.startswith("- "):
                 parsed["notes"].append(line[2:])
-            elif len(line) > 50 and not parsed["summary"]:  # Use first long line as summary
+            elif len(line) > 50 and not parsed["summary"]:
                 parsed["summary"] = line
-    except Exception:
+    except Exception as e:
+        print(f"Error parsing verification report: {e}")
         parsed["summary"] = report_text[:200] + "..." if len(report_text) > 200 else report_text
     
     return parsed
@@ -365,6 +440,61 @@ with chat_container:
                             for note in parsed_report["notes"]:
                                 st.markdown(f"- {note}")
                         
+                        # NEW: Display Retrieval Scores
+                        if parsed_report.get("retrieval_scores"):
+                            has_scores = False
+                            for section in ["bm25", "vector", "combined"]:
+                                if parsed_report["retrieval_scores"].get(section):
+                                    has_scores = True
+                                    break
+                            
+                            if has_scores:
+                                st.markdown("---")
+                                st.markdown("**🔍 Retrieval Scores:**")
+                                
+                                # Display BM25 scores
+                                if parsed_report["retrieval_scores"].get("bm25"):
+                                    with st.expander("📊 BM25 Scores", expanded=False):
+                                        for i, score_item in enumerate(parsed_report["retrieval_scores"]["bm25"], 1):
+                                            score_value = score_item.get("score_value", 0)
+                                            score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                            st.markdown(f"""
+                                            <div style="padding: 5px; margin: 2px 0; border-left: 4px solid {score_color}; padding-left: 10px;">
+                                                <strong>{i}. {score_item.get('score', 'N/A')}</strong><br/>
+                                                <small>Source: {score_item.get('source', 'Unknown')}</small>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                
+                                # Display Vector scores
+                                if parsed_report["retrieval_scores"].get("vector"):
+                                    with st.expander("🧠 Vector Scores", expanded=False):
+                                        for i, score_item in enumerate(parsed_report["retrieval_scores"]["vector"], 1):
+                                            score_value = score_item.get("score_value", 0)
+                                            score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                            st.markdown(f"""
+                                            <div style="padding: 5px; margin: 2px 0; border-left: 4px solid {score_color}; padding-left: 10px;">
+                                                <strong>{i}. {score_item.get('score', 'N/A')}</strong><br/>
+                                                <small>Source: {score_item.get('source', 'Unknown')}</small>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                
+                                # Display Combined scores
+                                if parsed_report["retrieval_scores"].get("combined"):
+                                    with st.expander("🔀 Combined Scores", expanded=False):
+                                        for i, score_item in enumerate(parsed_report["retrieval_scores"]["combined"], 1):
+                                            score_value = score_item.get("score_value", 0)
+                                            retriever_type = score_item.get('retriever_type', 'Unknown')
+                                            score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                            type_badge = f"<span style='background-color: {'#4CAF50' if retriever_type == 'BM25' else '#2196F3'}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px;'>{retriever_type}</span>"
+                                            
+                                            st.markdown(f"""
+                                            <div style="padding: 5px; margin: 2px 0; border-left: 4px solid {score_color}; padding-left: 10px;">
+                                                {type_badge}
+                                                <strong>{i}. {score_item.get('score', 'N/A')}</strong><br/>
+                                                <small>Source: {score_item.get('source', 'Unknown')}</small>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                        
                         # Raw report (collapsible)
                         with st.expander("📋 View Raw Report"):
                             st.code(verification_data)
@@ -389,7 +519,14 @@ with chat_container:
                             else:
                                 display_name = source_name
                             
-                            st.markdown(f"**{source_icon} Resource {i}:** `{display_name}`")
+                            # Display score if available
+                            score_info = ""
+                            if doc.get('score'):
+                                score_value = doc.get('raw_score', 0)
+                                score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                score_info = f"<span style='color: {score_color}; font-weight: bold;'>({doc['score']})</span>"
+                            
+                            st.markdown(f"**{source_icon} Resource {i}:** `{display_name}` {score_info}", unsafe_allow_html=True)
                             
                             if doc['page'] != 'N/A':
                                 st.caption(f"**Page:** {doc['page']}")
@@ -465,11 +602,66 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                         for note in parsed_report["notes"]:
                                             st.markdown(f"- {note}")
                                     
+                                    # NEW: Display Retrieval Scores
+                                    if parsed_report.get("retrieval_scores"):
+                                        has_scores = False
+                                        for section in ["bm25", "vector", "combined"]:
+                                            if parsed_report["retrieval_scores"].get(section):
+                                                has_scores = True
+                                                break
+                                        
+                                        if has_scores:
+                                            st.markdown("---")
+                                            st.markdown("**🔍 Retrieval Scores:**")
+                                            
+                                            # Display BM25 scores
+                                            if parsed_report["retrieval_scores"].get("bm25"):
+                                                with st.expander("📊 BM25 Scores", expanded=False):
+                                                    for i, score_item in enumerate(parsed_report["retrieval_scores"]["bm25"], 1):
+                                                        score_value = score_item.get("score_value", 0)
+                                                        score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                                        st.markdown(f"""
+                                                        <div style="padding: 5px; margin: 2px 0; border-left: 4px solid {score_color}; padding-left: 10px;">
+                                                            <strong>{i}. {score_item.get('score', 'N/A')}</strong><br/>
+                                                            <small>Source: {score_item.get('source', 'Unknown')}</small>
+                                                        </div>
+                                                        """, unsafe_allow_html=True)
+                                            
+                                            # Display Vector scores
+                                            if parsed_report["retrieval_scores"].get("vector"):
+                                                with st.expander("🧠 Vector Scores", expanded=False):
+                                                    for i, score_item in enumerate(parsed_report["retrieval_scores"]["vector"], 1):
+                                                        score_value = score_item.get("score_value", 0)
+                                                        score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                                        st.markdown(f"""
+                                                        <div style="padding: 5px; margin: 2px 0; border-left: 4px solid {score_color}; padding-left: 10px;">
+                                                            <strong>{i}. {score_item.get('score', 'N/A')}</strong><br/>
+                                                            <small>Source: {score_item.get('source', 'Unknown')}</small>
+                                                        </div>
+                                                        """, unsafe_allow_html=True)
+                                            
+                                            # Display Combined scores
+                                            if parsed_report["retrieval_scores"].get("combined"):
+                                                with st.expander("🔀 Combined Scores", expanded=False):
+                                                    for i, score_item in enumerate(parsed_report["retrieval_scores"]["combined"], 1):
+                                                        score_value = score_item.get("score_value", 0)
+                                                        retriever_type = score_item.get('retriever_type', 'Unknown')
+                                                        score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                                        type_badge = f"<span style='background-color: {'#4CAF50' if retriever_type == 'BM25' else '#2196F3'}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px;'>{retriever_type}</span>"
+                                                        
+                                                        st.markdown(f"""
+                                                        <div style="padding: 5px; margin: 2px 0; border-left: 4px solid {score_color}; padding-left: 10px;">
+                                                            {type_badge}
+                                                            <strong>{i}. {score_item.get('score', 'N/A')}</strong><br/>
+                                                            <small>Source: {score_item.get('source', 'Unknown')}</small>
+                                                        </div>
+                                                        """, unsafe_allow_html=True)
+                                    
                                     # Raw report
                                     with st.expander("📋 View Raw Report"):
                                         st.code(verification_report)
                             
-                            # Display resources
+                            # Display resources with scores
                             if source_documents:
                                 with st.expander("📚 **Resources**", expanded=False):
                                     st.caption("Resources from your knowledge base")
@@ -483,7 +675,14 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
                                         else:
                                             display_name = source_name
                                         
-                                        st.markdown(f"**{source_icon} Resource {i}:** `{display_name}`")
+                                        # Display score if available
+                                        score_info = ""
+                                        if doc.get('score'):
+                                            score_value = doc.get('raw_score', 0)
+                                            score_color = "green" if score_value > 0.7 else "orange" if score_value > 0.3 else "red"
+                                            score_info = f"<span style='color: {score_color}; font-weight: bold;'>({doc['score']})</span>"
+                                        
+                                        st.markdown(f"**{source_icon} Resource {i}:** `{display_name}` {score_info}", unsafe_allow_html=True)
                                         
                                         if doc['page'] != 'N/A':
                                             st.caption(f"**Page:** {doc['page']}")
