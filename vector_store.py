@@ -44,16 +44,30 @@ def get_qdrant_vector_store(user_id):
     embeddings = get_embedding_model()
     collection_name = get_user_collection_name(user_id)
 
+    # FIXED: Better error handling for collection creation
     try:
-        client.get_collection(collection_name)
-    except Exception:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=384,
-                distance=Distance.COSINE,
-            ),
-        )
+        # Try to get the collection
+        collection_info = client.get_collection(collection_name)
+        print(f"✅ Found existing Qdrant collection: {collection_name}")
+        print(f"   Points count: {collection_info.points_count}")
+    except Exception as e:
+        # Collection doesn't exist, create it
+        print(f"⚠️ Collection '{collection_name}' not found, creating it...")
+        try:
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(
+                    size=384,  # This MUST match the embedding model dimension
+                    distance=Distance.COSINE,
+                ),
+            )
+            print(f"✅ Created new Qdrant collection: {collection_name}")
+        except Exception as create_error:
+            print(f"❌ FAILED to create collection '{collection_name}': {create_error}")
+            # Check if it's a permission issue
+            if "permission" in str(create_error).lower() or "forbidden" in str(create_error).lower():
+                print("💡 Possible issue: Your Qdrant API key might not have create collection permissions")
+            raise create_error
 
     return QdrantVectorStore(
         client=client,
@@ -77,6 +91,7 @@ def get_bm25_retriever(user_id):
             client.get_collection(collection_name)
         except Exception:
             # Collection doesn't exist yet
+            print(f"⚠️ BM25: Collection '{collection_name}' doesn't exist yet")
             return None
         
         # Fetch all documents from vector store
@@ -102,6 +117,7 @@ def get_bm25_retriever(user_id):
                 break
         
         if not all_points:
+            print(f"⚠️ BM25: No points found in collection '{collection_name}'")
             return None
         
         # Convert points to LangChain Documents
@@ -131,6 +147,7 @@ def get_bm25_retriever(user_id):
             ))
         
         if not documents:
+            print(f"⚠️ BM25: No valid documents found in points")
             return None
             
         # Create BM25 retriever
@@ -152,12 +169,21 @@ def clear_all_data(user_id):
     try:
         client = get_qdrant_client()
         collection_name = get_user_collection_name(user_id)
-        client.delete_collection(collection_name)
-        print(f"🗑️ Cleared Qdrant collection: {collection_name}")
-        return "Cleared vector store"
+        
+        # Check if collection exists before trying to delete
+        try:
+            client.get_collection(collection_name)
+            client.delete_collection(collection_name)
+            print(f"🗑️ Cleared Qdrant collection: {collection_name}")
+            return "Cleared vector store"
+        except Exception as e:
+            # Collection doesn't exist, that's fine
+            print(f"⚠️ Collection '{collection_name}' doesn't exist, nothing to clear")
+            return "Collection didn't exist"
+            
     except Exception as e:
-        print(f"⚠️ Error clearing Qdrant data: {e}")
-        return "Cleared vector store"
+        print(f"⚠️ Error in clear_all_data: {e}")
+        return f"Error: {e}"
 
 def remove_documents_from_store(user_id, source, doc_type, db_manager=None):
     """Remove documents from Qdrant and optionally clean temp files"""
@@ -165,6 +191,13 @@ def remove_documents_from_store(user_id, source, doc_type, db_manager=None):
     collection = get_user_collection_name(user_id)
     
     try:
+        # First check if collection exists
+        try:
+            client.get_collection(collection)
+        except Exception:
+            print(f"⚠️ Collection '{collection}' doesn't exist, nothing to delete")
+            return False
+        
         # Find ALL points to delete from Qdrant
         all_delete_ids = []
         next_offset = None
@@ -210,22 +243,10 @@ def remove_documents_from_store(user_id, source, doc_type, db_manager=None):
         if all_delete_ids:
             print(f"🗑️ Deleting {len(all_delete_ids)} chunks from Qdrant for {source}")
             client.delete(collection_name=collection, points_selector=all_delete_ids)
+            return True
         
-        # If db_manager provided and it's a PDF, also clean temp files
-        if db_manager and doc_type == "pdf":
-            try:
-                # Clean temp files
-                from data_processing import get_user_data_path
-                data_path = get_user_data_path(user_id)
-                if data_path and os.path.exists(data_path):
-                    file_path = os.path.join(data_path, source)
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        print(f"🗑️ Deleted temp file: {file_path}")
-            except Exception as e:
-                print(f"⚠️ Could not delete temp file: {e}")
-        
-        return deleted_count > 0  # Return True if anything was deleted
+        print(f"⚠️ No documents found to delete for {source}")
+        return False
         
     except Exception as e:
         print(f"❌ Error deleting documents: {e}")
@@ -236,14 +257,31 @@ def remove_documents_from_store(user_id, source, doc_type, db_manager=None):
 # ==========================
 def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
     """Build vector store from uploaded PDF files and log to MongoDB"""
+    print(f"📥 Starting PDF processing for user {user_id}")
+    print(f"   Mode: {'Append' if append else 'Replace'}")
+    print(f"   Files: {[f.name for f in uploaded_files]}")
+    
     if not append:
+        print("🔄 Clearing existing data...")
         clear_all_data(user_id)
         db_manager.clear_user_data(user_id)  # Clear MongoDB too
-
-    store = get_qdrant_vector_store(user_id)
+    else:
+        print("➕ Adding to existing data...")
+    
+    # FIXED: Get vector store FIRST (this creates collection if needed)
+    try:
+        store = get_qdrant_vector_store(user_id)
+    except Exception as e:
+        print(f"❌ FAILED to get/create vector store: {e}")
+        return None, "failed"
     
     # Save uploaded files to temp storage
-    file_paths = save_uploaded_files(uploaded_files, user_id)
+    try:
+        file_paths = save_uploaded_files(uploaded_files, user_id)
+        print(f"✅ Saved {len(file_paths)} files to temp storage")
+    except Exception as e:
+        print(f"❌ Failed to save files: {e}")
+        return None, "failed"
     
     # Get chunks from these files
     all_chunks = []
@@ -251,6 +289,7 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
     
     for file_path in file_paths:
         try:
+            print(f"📄 Processing: {os.path.basename(file_path)}")
             # Load documents from this PDF
             documents = load_pdf_files([file_path])
             if documents:
@@ -265,58 +304,94 @@ def build_vector_store_from_pdfs(user_id, uploaded_files, append=False):
                     'pages': pages,
                     'chunks': len(chunks)
                 })
+                print(f"   Created {len(chunks)} chunks from {pages} pages")
+            else:
+                print(f"⚠️ No documents loaded from {os.path.basename(file_path)}")
         except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+            print(f"❌ Error processing {file_path}: {e}")
     
     if all_chunks:
         # Add to Qdrant
-        store.add_documents(all_chunks)
+        print(f"📤 Adding {len(all_chunks)} total chunks to Qdrant...")
+        try:
+            store.add_documents(all_chunks)
+            print(f"✅ Added {len(all_chunks)} chunks to Qdrant")
+        except Exception as e:
+            print(f"❌ Failed to add documents to Qdrant: {e}")
+            return None, "failed"
         
         # Log to MongoDB for each file
+        print("📝 Logging files to MongoDB...")
         for file, stats in zip(uploaded_files, file_stats):
-            db_manager.log_file_upload(
-                user_id=user_id,
-                filename=stats['filename'],
-                file_size=file.size,
-                pages_processed=stats['pages']
-            )
+            try:
+                db_manager.log_file_upload(
+                    user_id=user_id,
+                    filename=stats['filename'],
+                    file_size=file.size,
+                    pages_processed=stats['pages']
+                )
+                print(f"   Logged: {stats['filename']} ({stats['pages']} pages)")
+            except Exception as e:
+                print(f"⚠️ Failed to log {stats['filename']} to MongoDB: {e}")
         
-        print(f"✅ Added {len(all_chunks)} chunks from {len(file_stats)} files to Qdrant")
-        print(f"✅ Logged {len(file_stats)} files to MongoDB")
+        print(f"✅ Successfully processed {len(file_stats)} files")
         return store, "added"
     
+    print("❌ No chunks were created from the uploaded files")
     return None, "no_documents"
 
 def build_vector_store_from_urls(user_id, urls, append=False):
     """Build vector store from URLs and log to MongoDB"""
+    print(f"🌐 Starting URL processing for user {user_id}")
+    print(f"   URLs: {urls}")
+    
     if not append:
+        print("🔄 Clearing existing data...")
         clear_all_data(user_id)
         db_manager.clear_user_data(user_id)
-
-    store = get_qdrant_vector_store(user_id)
+    else:
+        print("➕ Adding to existing data...")
+    
+    # FIXED: Get vector store FIRST (this creates collection if needed)
+    try:
+        store = get_qdrant_vector_store(user_id)
+    except Exception as e:
+        print(f"❌ FAILED to get/create vector store: {e}")
+        return None, "failed"
+    
     chunks = scrape_urls_to_chunks(urls)
 
     if chunks:
-        store.add_documents(chunks)
+        print(f"📤 Adding {len(chunks)} chunks to Qdrant...")
+        try:
+            store.add_documents(chunks)
+            print(f"✅ Added {len(chunks)} chunks to Qdrant")
+        except Exception as e:
+            print(f"❌ Failed to add documents to Qdrant: {e}")
+            return None, "failed"
         
         # Log to MongoDB
+        print("📝 Logging URLs to MongoDB...")
         successful_urls = []
         for chunk in chunks:
             url = chunk.metadata.get('source')
             if url and url not in successful_urls:
                 successful_urls.append(url)
         
-        db_manager.log_web_scrape(
-            user_id=user_id,
-            urls=urls,
-            successful_urls=successful_urls,
-            total_chunks=len(chunks)
-        )
+        try:
+            db_manager.log_web_scrape(
+                user_id=user_id,
+                urls=urls,
+                successful_urls=successful_urls,
+                total_chunks=len(chunks)
+            )
+            print(f"✅ Logged {len(successful_urls)} URLs to MongoDB")
+        except Exception as e:
+            print(f"⚠️ Failed to log URLs to MongoDB: {e}")
         
-        print(f"✅ Added {len(chunks)} chunks from {len(successful_urls)} URLs to Qdrant")
-        print(f"✅ Logged {len(successful_urls)} URLs to MongoDB")
         return store, "added"
     
+    print("❌ No chunks were created from the URLs")
     return None, "no_new_urls"
 
 # ==========================
@@ -329,6 +404,9 @@ def vector_store_exists(user_id):
     try:
         client = get_qdrant_client()
         info = client.get_collection(get_user_collection_name(user_id))
-        return info.points_count > 0
-    except Exception:
+        exists = info.points_count > 0
+        print(f"🔍 Vector store exists check: {exists} (points: {info.points_count})")
+        return exists
+    except Exception as e:
+        print(f"🔍 Vector store doesn't exist: {e}")
         return False
