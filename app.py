@@ -3,13 +3,15 @@ import streamlit as st
 from data_processing import get_existing_pdf_files, save_uploaded_files
 from vector_store import (
     clear_all_data, build_vector_store_from_pdfs, build_vector_store_from_urls,
-    get_vector_store, vector_store_exists, remove_documents_from_store
+    get_vector_store, vector_store_exists, remove_documents_from_store,
+    get_document_overview, generate_document_summary  # ✅ NEW: Import metadata functions
 )
-from query_processor import process_query
+from query_processor import get_cached_query_processor, process_query  # ✅ UPDATED: Use cached processor
 from config import validate_api_key
 from auth import setup_authentication
 from database import MongoDBManager
 import shutil
+import time
 
 # --- Configuration ---
 st.set_page_config(page_title="DocuBot AI", page_icon="🤖", layout="wide")
@@ -32,7 +34,7 @@ if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'source_docs' not in st.session_state:
     st.session_state.source_docs = {}
-if 'verification_reports' not in st.session_state:  # ✅ NEW: Store verification reports
+if 'verification_reports' not in st.session_state:
     st.session_state.verification_reports = {}
 if 'user_data_loaded' not in st.session_state:
     st.session_state.user_data_loaded = False
@@ -44,8 +46,16 @@ if 'vector_store_exists' not in st.session_state:
     st.session_state.vector_store_exists = vector_store_exists(user_id)
 if 'last_processed_query' not in st.session_state:
     st.session_state.last_processed_query = ""
-if 'use_agentic_mode' not in st.session_state:  # ✅ NEW: Agentic mode toggle
+if 'use_agentic_mode' not in st.session_state:
     st.session_state.use_agentic_mode = True
+if 'query_processor' not in st.session_state:  # ✅ NEW: Store query processor
+    st.session_state.query_processor = None
+if 'conversation_context' not in st.session_state:  # ✅ NEW: Track conversation state
+    st.session_state.conversation_context = {
+        'active_topics': [],
+        'last_intent': None,
+        'last_query_time': None
+    }
 
 # Load user data once
 if user_id and not st.session_state.user_data_loaded:
@@ -106,6 +116,119 @@ def parse_verification_report(report_text):
     
     return parsed
 
+# ✅ NEW: Handle document metadata queries
+def handle_document_metadata_query(query: str) -> str:
+    """Handle queries about document contents/metadata"""
+    try:
+        # Generate document summary
+        summary = generate_document_summary(user_id)
+        
+        # Check if query is asking for something specific
+        query_lower = query.lower()
+        
+        if "what's in" in query_lower or "what is in" in query_lower or "contains" in query_lower:
+            return summary
+        
+        elif "topics" in query_lower or "subjects" in query_lower:
+            # Extract topics from summary
+            lines = summary.split('\n')
+            topics_section = ""
+            for line in lines:
+                if "Topics:" in line or "Common topics:" in line:
+                    topics_section += line + "\n"
+            
+            if topics_section:
+                return f"Here are the topics covered in your documents:\n\n{topics_section}"
+            else:
+                return summary
+        
+        elif "chapters" in query_lower or "sections" in query_lower:
+            # Extract structure info
+            documents = get_document_overview(user_id)
+            response = "## 📖 Document Structure\n\n"
+            
+            for doc in documents:
+                if doc.get("type") == "pdf" and doc.get("sections"):
+                    response += f"### 📄 {doc.get('filename', 'Document')}\n"
+                    for section in doc["sections"][:5]:  # Show first 5 sections
+                        response += f"• Page {section.get('page', '?')}: {section.get('text', '')}\n"
+                    response += "\n"
+            
+            if response == "## 📖 Document Structure\n\n":
+                response = "No detailed section information available in the documents.\n\n" + summary
+            
+            return response
+        
+        else:
+            return summary
+            
+    except Exception as e:
+        print(f"Error handling metadata query: {e}")
+        return "I can see you have documents in your knowledge base, but I couldn't generate a detailed summary. Please ask specific questions about the document content."
+
+# ✅ NEW: Check if query needs special handling
+def should_handle_specially(query: str) -> bool:
+    """Check if query should be handled specially (metadata, reset, etc.)"""
+    query_lower = query.lower().strip()
+    
+    # Document metadata queries
+    metadata_keywords = [
+        "what's in", "what is in", "contains", "document", "pdf", 
+        "topics", "chapters", "sections", "overview", "summary"
+    ]
+    
+    if any(keyword in query_lower for keyword in metadata_keywords):
+        return True
+    
+    # Conversation control queries
+    control_keywords = ["clear conversation", "reset chat", "new topic", "forget", "start over"]
+    if any(keyword in query_lower for keyword in control_keywords):
+        return True
+    
+    return False
+
+# ✅ NEW: Handle special queries
+def handle_special_query(query: str) -> str:
+    """Handle special queries that don't need normal processing"""
+    query_lower = query.lower().strip()
+    
+    # Conversation reset
+    if any(keyword in query_lower for keyword in ["clear conversation", "reset chat", "new topic", "forget", "start over"]):
+        if st.session_state.query_processor:
+            st.session_state.query_processor.conversation_manager.clear_history()
+        st.session_state.conversation_context = {
+            'active_topics': [],
+            'last_intent': None,
+            'last_query_time': None
+        }
+        return "✅ Conversation context cleared! I'm ready for a new topic."
+    
+    # Document metadata queries
+    if any(keyword in query_lower for keyword in ["what's in", "what is in", "contains", "document", "pdf", "topics", "chapters", "sections"]):
+        if not st.session_state.vector_store_exists:
+            return "You don't have any documents in your knowledge base yet. Please upload PDFs or add websites first."
+        return handle_document_metadata_query(query)
+    
+    # Help/instructions
+    if "help" in query_lower or "how to use" in query_lower:
+        return """
+## 🤖 How to use DocuBot:
+
+1. **Upload Documents**: Use the sidebar to upload PDFs or add website URLs
+2. **Ask Questions**: Ask anything about your uploaded content
+3. **Follow-up**: Ask short questions like "give examples" or "show code" for more details
+4. **Document Overview**: Ask "what's in my documents?" to see what you've uploaded
+5. **Agentic Mode**: Toggle advanced verification in the sidebar
+
+**Tips:**
+- Be specific with your questions
+- Use follow-up questions for more details
+- Check the verification reports for confidence levels
+- Clear conversation when switching topics
+"""
+    
+    return None  # Not a special query
+
 # --- Optimized Sidebar ---
 with st.sidebar:
     st.title("DocuBot Controls")
@@ -113,7 +236,21 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # ✅ NEW: Agentic Mode Toggle
+    # ✅ NEW: Show conversation status
+    if st.session_state.query_processor and st.session_state.query_processor.conversation_manager.history:
+        with st.expander("💬 Current Conversation", expanded=False):
+            manager = st.session_state.query_processor.conversation_manager
+            if manager.current_topics:
+                st.caption("**Active Topics:**")
+                for topic in manager.current_topics[-3:]:  # Show last 3 topics
+                    st.write(f"• {topic}")
+            
+            if manager.history:
+                st.caption("**Recent Questions:**")
+                for i, interaction in enumerate(manager.history[-2:], 1):
+                    st.write(f"{i}. {interaction['question'][:50]}...")
+    
+    # Agentic Mode Toggle
     agentic_mode = st.checkbox(
         "🤖 **Agentic Mode**", 
         value=st.session_state.use_agentic_mode,
@@ -132,6 +269,12 @@ with st.sidebar:
     if st.session_state.vector_store_exists:
         st.markdown("---")
         st.subheader("Your Knowledge Base")
+        
+        # Quick document summary button
+        if st.button("📋 View Document Summary", use_container_width=True):
+            with st.spinner("Generating summary..."):
+                summary = generate_document_summary(user_id)
+                st.info(summary)
         
         # Uploaded Files
         files_container = st.container()
@@ -321,6 +464,12 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.source_docs = {}
             st.session_state.verification_reports = {}
+            st.session_state.query_processor = None  # ✅ Clear query processor
+            st.session_state.conversation_context = {  # ✅ Clear conversation
+                'active_topics': [],
+                'last_intent': None,
+                'last_query_time': None
+            }
             
             st.toast("All data cleared from Qdrant, MongoDB, and temp files!", icon="✨")
             st.rerun()
@@ -330,7 +479,15 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.source_docs = {}
         st.session_state.verification_reports = {}
-        st.toast("Chat history cleared!", icon="🧹")
+        # ✅ Also clear conversation in query processor
+        if st.session_state.query_processor:
+            st.session_state.query_processor.conversation_manager.clear_history()
+        st.session_state.conversation_context = {
+            'active_topics': [],
+            'last_intent': None,
+            'last_query_time': None
+        }
+        st.toast("Chat history and conversation context cleared!", icon="🧹")
     
     # Display stats with caching
     if st.session_state.vector_store_exists:
@@ -344,7 +501,11 @@ with st.sidebar:
         st.write(f"**Files:** {files_count}")
         st.write(f"**Websites:** {websites_count}")
         
-        # ✅ NEW: Show agent mode indicator
+        # Show conversation topics if available
+        if st.session_state.query_processor and st.session_state.query_processor.conversation_manager.current_topics:
+            st.caption(f"**Active Topics:** {', '.join(st.session_state.query_processor.conversation_manager.current_topics[-2:])}")
+        
+        # Show agent mode indicator
         if st.session_state.use_agentic_mode:
             st.caption("🤖 **Agentic mode:** Active")
 
@@ -361,9 +522,18 @@ else:
 # Welcome message - only show if no messages
 if not st.session_state.messages:
     if st.session_state.vector_store_exists:
-        st.success("Ready! Your knowledge base is loaded and ready for questions.")
+        st.success("✅ Ready! Your knowledge base is loaded and ready for questions.")
+        # Show quick tips
+        with st.expander("💡 Quick Tips", expanded=False):
+            st.markdown("""
+            - Ask **specific questions** about your documents
+            - Use **short follow-ups** like "give examples" or "show code"
+            - Ask **"what's in my documents?"** for an overview
+            - Toggle **Agentic Mode** for verification and research
+            - **Clear conversation** when switching topics
+            """)
     else:
-        st.info("Upload PDFs or add websites in the sidebar to build your knowledge base.")
+        st.info("📁 Upload PDFs or add websites in the sidebar to build your knowledge base.")
 
 # Display chat messages - optimized rendering
 chat_container = st.container()
@@ -461,112 +631,138 @@ if prompt := st.chat_input("Ask a question about your knowledge base..."):
             st.warning("Please add some content (PDFs or websites) before asking questions.")
         else:
             try:
-                with st.spinner("Thinking..." if not st.session_state.use_agentic_mode else "🤖 Agentic workflow running..."):
-                    result = process_query(
-                        prompt, 
-                        api_key, 
-                        user_id,
-                        use_agentic=st.session_state.use_agentic_mode
-                    )
-                    
-                    if result['success']:
-                        answer = result['answer']
-                        source_documents = result['sources']
-                        verification_report = result.get('verification_report')
+                # Check for special queries first
+                special_response = handle_special_query(prompt)
+                if special_response:
+                    with st.chat_message('assistant'):
+                        st.markdown(special_response)
+                        st.session_state.messages.append({'role': 'assistant', 'content': special_response})
+                else:
+                    # Normal query processing
+                    with st.spinner("🤖 Processing your question..."):
+                        # Initialize query processor if needed
+                        if st.session_state.query_processor is None:
+                            st.session_state.query_processor = get_cached_query_processor(api_key, user_id)
+                        
+                        start_time = time.time()
+                        
+                        # Process the query with conversation context
+                        result = st.session_state.query_processor.process_query(
+                            prompt,
+                            use_agentic=st.session_state.use_agentic_mode
+                        )
+                        
+                        processing_time = time.time() - start_time
+                        
+                        if result['success']:
+                            answer = result['answer']
+                            source_documents = result['sources']
+                            verification_report = result.get('verification_report')
+                            query_intent = result.get('query_intent', {})
 
-                        with st.chat_message('assistant'):
-                            st.markdown(answer)
+                            with st.chat_message('assistant'):
+                                st.markdown(answer)
+                                
+                                # Display verification report if available
+                                if verification_report and st.session_state.use_agentic_mode:
+                                    with st.expander("🔍 **Verification Report**", expanded=False):
+                                        parsed_report = parse_verification_report(verification_report)
+                                        
+                                        # Status badges
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            if parsed_report.get("supported") == "YES":
+                                                st.success("✅ Supported")
+                                            elif parsed_report.get("supported") == "NO":
+                                                st.error("❌ Unsupported")
+                                            else:
+                                                st.info("🔍 Support Check")
+                                        
+                                        with col2:
+                                            if parsed_report.get("relevant") == "YES":
+                                                st.success("✅ Relevant")
+                                            elif parsed_report.get("relevant") == "NO":
+                                                st.error("❌ Irrelevant")
+                                            else:
+                                                st.info("🔍 Relevance")
+                                        
+                                        with col3:
+                                            if parsed_report.get("confidence"):
+                                                st.info(f"📊 {parsed_report['confidence']}")
+                                        
+                                        # Summary
+                                        if parsed_report.get("summary"):
+                                            st.markdown("**Summary:**")
+                                            st.write(parsed_report["summary"])
+                                        
+                                        # Notes
+                                        if parsed_report.get("notes"):
+                                            st.markdown("**Notes:**")
+                                            for note in parsed_report["notes"]:
+                                                st.markdown(f"- {note}")
+                                        
+                                        # Raw report
+                                        with st.expander("📋 View Raw Report"):
+                                            st.code(verification_report)
+                                
+                                # Display resources
+                                if source_documents:
+                                    with st.expander("📚 **Resources**", expanded=False):
+                                        st.caption("Resources from your knowledge base")
+                                        
+                                        for i, doc in enumerate(source_documents, 1):
+                                            source_icon = "🌐" if doc.get('type') == 'web' else "📄"
+                                            source_name = doc['document']
+                                            
+                                            if len(source_name) > 50:
+                                                display_name = source_name[:47] + "..."
+                                            else:
+                                                display_name = source_name
+                                            
+                                            st.markdown(f"**{source_icon} Resource {i}:** `{display_name}`")
+                                            
+                                            if doc['page'] != 'N/A':
+                                                st.caption(f"**Page:** {doc['page']}")
+                                            
+                                            excerpt = doc["excerpt"]
+                                            st.caption(f'**Excerpt:** "{excerpt}"')
+                                            st.markdown("---")
                             
-                            # Display verification report if available
-                            if verification_report and st.session_state.use_agentic_mode:
-                                with st.expander("🔍 **Verification Report**", expanded=False):
-                                    parsed_report = parse_verification_report(verification_report)
-                                    
-                                    # Status badges
-                                    col1, col2, col3 = st.columns(3)
-                                    with col1:
-                                        if parsed_report.get("supported") == "YES":
-                                            st.success("✅ Supported")
-                                        elif parsed_report.get("supported") == "NO":
-                                            st.error("❌ Unsupported")
-                                        else:
-                                            st.info("🔍 Support Check")
-                                    
-                                    with col2:
-                                        if parsed_report.get("relevant") == "YES":
-                                            st.success("✅ Relevant")
-                                        elif parsed_report.get("relevant") == "NO":
-                                            st.error("❌ Irrelevant")
-                                        else:
-                                            st.info("🔍 Relevance")
-                                    
-                                    with col3:
-                                        if parsed_report.get("confidence"):
-                                            st.info(f"📊 {parsed_report['confidence']}")
-                                    
-                                    # Summary
-                                    if parsed_report.get("summary"):
-                                        st.markdown("**Summary:**")
-                                        st.write(parsed_report["summary"])
-                                    
-                                    # Notes
-                                    if parsed_report.get("notes"):
-                                        st.markdown("**Notes:**")
-                                        for note in parsed_report["notes"]:
-                                            st.markdown(f"- {note}")
-                                    
-                                    # Raw report
-                                    with st.expander("📋 View Raw Report"):
-                                        st.code(verification_report)
+                            # Store message and associated data
+                            message_index = len(st.session_state.messages)
+                            st.session_state.messages.append({'role': 'assistant', 'content': answer})
+                            st.session_state.source_docs[message_index] = source_documents
                             
-                            # Display resources
-                            if source_documents:
-                                with st.expander("📚 **Resources**", expanded=False):
-                                    st.caption("Resources from your knowledge base")
-                                    
-                                    for i, doc in enumerate(source_documents, 1):
-                                        source_icon = "🌐" if doc.get('type') == 'web' else "📄"
-                                        source_name = doc['document']
-                                        
-                                        if len(source_name) > 50:
-                                            display_name = source_name[:47] + "..."
-                                        else:
-                                            display_name = source_name
-                                        
-                                        st.markdown(f"**{source_icon} Resource {i}:** `{display_name}`")
-                                        
-                                        if doc['page'] != 'N/A':
-                                            st.caption(f"**Page:** {doc['page']}")
-                                        
-                                        excerpt = doc["excerpt"]
-                                        st.caption(f'**Excerpt:** "{excerpt}"')
-                                        st.markdown("---")
-                        
-                        # Store message and associated data
-                        message_index = len(st.session_state.messages)
-                        st.session_state.messages.append({'role': 'assistant', 'content': answer})
-                        st.session_state.source_docs[message_index] = source_documents
-                        
-                        # ✅ Store verification report for this message
-                        if verification_report:
-                            st.session_state.verification_reports[message_index] = verification_report
-                        
-                        # Log query
-                        if source_documents:
+                            # Store verification report for this message
+                            if verification_report:
+                                st.session_state.verification_reports[message_index] = verification_report
+                            
+                            # Update conversation context
+                            st.session_state.conversation_context['last_query_time'] = time.time()
+                            st.session_state.conversation_context['last_intent'] = query_intent.get('type', 'unknown')
+                            
+                            # Update active topics from conversation manager
+                            if st.session_state.query_processor:
+                                manager = st.session_state.query_processor.conversation_manager
+                                if manager.current_topics:
+                                    st.session_state.conversation_context['active_topics'] = manager.current_topics[-3:]
+                            
+                            # Log query
                             try:
                                 db_manager.log_query(
                                     user_id=user_id,
                                     query=prompt,
                                     response=answer,
                                     sources_used=source_documents,
-                                    processing_time=0,
+                                    processing_time=processing_time,
                                     agentic_mode=st.session_state.use_agentic_mode,
-                                    verification_result=parsed_report.get("supported") if verification_report else None
+                                    verification_result=parsed_report.get("supported") if verification_report else None,
+                                    query_intent=query_intent.get('type', 'unknown')
                                 )
-                            except Exception:
-                                pass  # Silently fail query logging
-                    else:
-                        st.error(result['error'])
+                            except Exception as e:
+                                print(f"Query logging failed: {e}")
+                        else:
+                            st.error(f"Error: {result['error']}")
 
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
